@@ -1,107 +1,124 @@
-#include "SIPaccount.h"
-#include "DialogForm.h"
-#include "IncomigCallForm.h"
-#include <thread>
-#include <sstream>
-#include "Magma.h"
-SIPaccount::SIPaccount()
+#include <pjmedia/port.h>
+#include <pjlib.h>
+#include <stdio.h>
+
+static FILE *text_file = NULL;
+static char file_buffer[SAMPLES_PER_FRAME]; // Буфер для хранения данных из файла
+
+// Функция для открытия файла
+pj_status_t open_text_file(const char *file_path)
 {
-    std::ifstream ifs("D:\\PSU\\DIPLOM\\Debug\\KEY.txt");
-    //std::ifstream ifs("C:\\Users\\sdxop\\Desktop\\share\\DIPLOM\\Debug\\KEY.txt");
-    if (!ifs)
-        std::cerr << "mda";
-    ifs >> key;
-    if (key != "")
-        cryptFlag = 1;
-    ifs.close();
+    text_file = fopen(file_path, "r");
+    if (!text_file) {
+        PJ_LOG(1, (THIS_FILE, "Не удалось открыть файл: %s", file_path));
+        return PJ_EIO;
+    }
+    return PJ_SUCCESS;
 }
 
-SIPaccount::SIPaccount(VoIPhone::SIPPresenter^ pres)
+// Функция для закрытия файла
+void close_text_file()
 {
-    std::ifstream ifs("D:\\PSU\\DIPLOM\\Debug\\KEY.txt");
-    //std::ifstream ifs("C:\\Users\\sdxop\\Desktop\\share\\DIPLOM\\Debug\\KEY.txt");
-    if (!ifs)
-        std::cerr << "mda";
-    ifs >> key;
-    if (key != "")
-        cryptFlag = 1;
-    ifs.close();
-   this->presenter = pres;
-}
-
-SIPaccount::~SIPaccount()
-{
-    std::cout << "*** Account is being deleted: No of calls =" << calls.size() << std::endl;
-    for (std::vector<pj::Call*>::iterator it = calls.begin(); it != calls.end(); )
-    {
-        delete (*it);
-        it = calls.erase(it);
+    if (text_file) {
+        fclose(text_file);
+        text_file = NULL;
     }
 }
 
-void SIPaccount::onRegState(pj::OnRegStateParam& prm) {
-    pj::AccountInfo ai = getInfo();
-    std::cout << (ai.regIsActive ? "*** Register:" : "*** Unregister:")
-        << " code=" << prm.code << std::endl;
-}
-
-void SIPaccount::removeCall(pj::Call* call)
+// Функция для чтения данных из файла в фрейм
+static pj_status_t custom_get_frame(pjmedia_port *port, pjmedia_frame *frame)
 {
-    for (std::vector<pj::Call*>::iterator it = calls.begin();
-        it != calls.end(); ++it)
-    {
-        if (*it == call) {
-            calls.erase(it);
-            break;
-        }
-    }
-}
-
-void SIPaccount::onIncomingCall(pj::OnIncomingCallParam& iprm)
-{
-    pj::Call* call = new MyCall(*this, iprm.callId);
-    pj::CallInfo ci = call->getInfo();
-    pj::CallOpParam prm;
-
-    std::cout << "*** Incoming Call: " << ci.remoteUri << " [" << ci.stateText << "]" << std::endl;
-    calls.push_back(call);
-    prm.statusCode = PJSIP_SC_OK;
-    VoIPhone::IncomigCallForm^ incCall = gcnew VoIPhone::IncomigCallForm(gcnew System::String(ci.remoteUri.c_str()));
-    incCall->ShowDialog();
-    bool state = incCall->getState();
-    if (state) {
-        call->answer(prm);
-        presenter->answerCall(gcnew System::String(ci.remoteUri.c_str()));
-    }
-    else {
-        calls.pop_back();
-        call->hangup(prm);
+    if (!text_file) {
+        PJ_LOG(1, (THIS_FILE, "Файл не открыт для чтения"));
+        return PJ_EIO;
     }
 
-}
+    // Читаем данные из файла в буфер
+    size_t bytes_read = fread(file_buffer, 1, sizeof(file_buffer), text_file);
 
-void SIPaccount::incall(pj::CallInfo* ci, pj::Call* call, pj::CallOpParam* prm)
-{
-    pj_thread_desc desc;
-    pj_thread_t* thread = 0;
-    pj_thread_register("incomCall", desc, &thread);
-    VoIPhone::DialogForm chatForm(*this, ci, call, prm);
-    chatForm.ShowDialog();
-    if (!this->calls.empty())
-        call->hangup(prm);
-}
-
-void SIPaccount::onInstantMessage(pj::OnInstantMessageParam& iprm)
-{
-    if (this->cryptFlag == 1) {
-        Magma magma(key.c_str(), "mouse");
-        std::string fmsgE = iprm.msgBody;
-        std::string fmsgD = "";
-        std::istringstream strStreamE(fmsgE);
-        std::ostringstream strStreamD(fmsgD);
-        magma.decrypt(Magma::Method::CFB, strStreamE, strStreamD);
-        presenter->updateChatMsgTextBox(gcnew System::String(iprm.fromUri.c_str()), gcnew System::String((strStreamD.str()).c_str()));
+    // Проверяем, что мы достигли конца файла, и если так, перезапускаем чтение с начала
+    if (bytes_read < sizeof(file_buffer)) {
+        rewind(text_file);  // Перемещаем указатель на начало файла
+        fread(file_buffer + bytes_read, 1, sizeof(file_buffer) - bytes_read, text_file); // дочитываем недостающие данные
     }
-    else
-        presenter->updateChatMsgTextBox(gcnew System::String(iprm.fromUri.c_str()), gcnew System::String(iprm.msgBody.c_str()));
+
+    // Копируем данные из буфера в аудиофрейм
+    pj_memcpy(frame->buf, file_buffer, sizeof(file_buffer));
+    frame->size = sizeof(file_buffer);  // Устанавливаем размер фрейма
+    frame->type = PJMEDIA_FRAME_TYPE_AUDIO;
+
+    return PJ_SUCCESS;
+}
+pj_status_t open_text_file(const char *file_path)
+{
+    text_file = fopen(file_path, "r");
+    if (!text_file) {
+        PJ_LOG(1, (THIS_FILE, "Не удалось открыть файл: %s", file_path));
+        return PJ_EIO;
+    }
+    return PJ_SUCCESS;
+}
+int main()
+{
+    pjsua_config cfg;
+    pjsua_logging_config log_cfg;
+    pjsua_media_config media_cfg;
+    pj_pool_t *pool;
+
+    // Инициализация PJSUA
+    pjsua_create();
+
+    // Конфигурация PJSUA
+    pjsua_config_default(&cfg);
+    pjsua_logging_config_default(&log_cfg);
+    pjsua_media_config_default(&media_cfg);
+
+    // Инициализация PJSUA
+    pjsua_init(&cfg, &log_cfg, &media_cfg);
+
+    // Открытие RTP-транспорта (для передачи медиа)
+    pjsua_transport_config transport_cfg;
+    pjsua_transport_config_default(&transport_cfg);
+    transport_cfg.port = 5060;
+    pjsua_transport_create(PJSIP_TRANSPORT_UDP, &transport_cfg, NULL);
+
+    // Запуск PJSUA
+    pjsua_start();
+
+    // Создаем memory pool для пользовательского медиа порта
+    pool = pjsua_pool_create("media_pool", 512, 512);
+
+    // Создаем пользовательский медиа-порт
+    create_custom_media_port(pool);
+
+    // Подключаем его к конференц мосту
+    connect_custom_port_to_conference();
+
+    // Ожидаем событий (например, звонков или подключения к конференции)
+    pjsua_handle_events(NULL);
+
+    // Остановка PJSUA
+    pjsua_destroy();
+    
+    return 0;
+}
+int main()
+{
+    // Открытие текстового файла перед началом передачи данных
+    pj_status_t status = open_text_file("path/to/textfile.txt");
+    if (status != PJ_SUCCESS) {
+        PJ_LOG(1, (THIS_FILE, "Ошибка открытия текстового файла"));
+        return -1;
+    }
+
+    // Инициализация PJSUA и настройка порта конференции
+    ...
+
+    // После окончания передачи данных, закрываем файл
+    close_text_file();
+
+    // Остановка PJSUA
+    pjsua_destroy();
+    
+    return 0;
 }
