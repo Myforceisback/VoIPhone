@@ -1,69 +1,97 @@
+#include <pjsua-lib/pjsua.h>
 #include <pjmedia/port.h>
-#include <pjlib.h>
 #include <stdio.h>
 
-static FILE *text_file = NULL;
-static char file_buffer[SAMPLES_PER_FRAME]; // Буфер для хранения данных из файла
+#define THIS_FILE "custom_media_file_send.c"
+#define PORT "custom-media-port"
 
-// Функция для открытия файла
-pj_status_t open_text_file(const char *file_path)
+static pjsua_conf_port_id conf_port_id;
+static pjmedia_port *custom_media_port;
+static FILE *file_to_send = NULL;
+
+#define FRAME_SIZE 320 // размер фрейма в байтах
+
+// Открытие файла для передачи
+pj_status_t open_file(const char *file_path)
 {
-    text_file = fopen(file_path, "r");
-    if (!text_file) {
+    file_to_send = fopen(file_path, "rb");
+    if (!file_to_send) {
         PJ_LOG(1, (THIS_FILE, "Не удалось открыть файл: %s", file_path));
         return PJ_EIO;
     }
     return PJ_SUCCESS;
 }
 
-// Функция для закрытия файла
-void close_text_file()
+// Закрытие файла после передачи
+void close_file()
 {
-    if (text_file) {
-        fclose(text_file);
-        text_file = NULL;
+    if (file_to_send) {
+        fclose(file_to_send);
+        file_to_send = NULL;
     }
 }
-
-// Функция для чтения данных из файла в фрейм
+// Функция для передачи кадров через медиапорт
 static pj_status_t custom_get_frame(pjmedia_port *port, pjmedia_frame *frame)
 {
-    if (!text_file) {
-        PJ_LOG(1, (THIS_FILE, "Файл не открыт для чтения"));
+    if (!file_to_send) {
+        PJ_LOG(1, (THIS_FILE, "Файл не открыт для передачи"));
         return PJ_EIO;
     }
 
-    // Читаем данные из файла в буфер
-    size_t bytes_read = fread(file_buffer, 1, sizeof(file_buffer), text_file);
+    // Читаем данные из файла и записываем в фрейм
+    size_t bytes_read = fread(frame->buf, 1, FRAME_SIZE, file_to_send);
 
-    // Проверяем, что мы достигли конца файла, и если так, перезапускаем чтение с начала
-    if (bytes_read < sizeof(file_buffer)) {
-        rewind(text_file);  // Перемещаем указатель на начало файла
-        fread(file_buffer + bytes_read, 1, sizeof(file_buffer) - bytes_read, text_file); // дочитываем недостающие данные
+    if (bytes_read < FRAME_SIZE) {
+        // Если достигли конца файла, закрываем и останавливаем передачу
+        PJ_LOG(3, (THIS_FILE, "Передача файла завершена"));
+        close_file();
+        frame->type = PJMEDIA_FRAME_TYPE_NONE; // Устанавливаем тип как NONE, чтобы завершить
+    } else {
+        frame->size = FRAME_SIZE;  // Размер данных
+        frame->type = PJMEDIA_FRAME_TYPE_AUDIO; // Используем тип аудиофрейма
     }
-
-    // Копируем данные из буфера в аудиофрейм
-    pj_memcpy(frame->buf, file_buffer, sizeof(file_buffer));
-    frame->size = sizeof(file_buffer);  // Устанавливаем размер фрейма
-    frame->type = PJMEDIA_FRAME_TYPE_AUDIO;
 
     return PJ_SUCCESS;
 }
-pj_status_t open_text_file(const char *file_path)
+
+// Создание медиапорта
+pj_status_t create_custom_media_port(pj_pool_t *pool)
 {
-    text_file = fopen(file_path, "r");
-    if (!text_file) {
-        PJ_LOG(1, (THIS_FILE, "Не удалось открыть файл: %s", file_path));
-        return PJ_EIO;
+    pj_status_t status;
+
+    status = pjmedia_port_create(pool, PORT, 8000, 1, FRAME_SIZE, 16, 0, &custom_media_port);
+    if (status != PJ_SUCCESS) {
+        PJ_LOG(1, (THIS_FILE, "Ошибка создания медиа порта"));
+        return status;
     }
+
+    // Присваиваем функцию для получения фреймов
+    custom_media_port->get_frame = &custom_get_frame;
+
     return PJ_SUCCESS;
 }
-int main()
+void connect_custom_port_to_conference()
+{
+    pj_status_t status = pjsua_conf_add_port(pjsua_get_conf_bridge(), custom_media_port, &conf_port_id);
+    if (status != PJ_SUCCESS) {
+        PJ_LOG(1, (THIS_FILE, "Ошибка добавления медиа порта в конференцию"));
+        return;
+    }
+
+    // Подключаем порт к конференц мосту
+    pjsua_conf_connect(conf_port_id, 0);  // Передаем данные в общий конференц-мост
+}
+int main(int argc, char *argv[])
 {
     pjsua_config cfg;
     pjsua_logging_config log_cfg;
     pjsua_media_config media_cfg;
     pj_pool_t *pool;
+
+    if (argc < 2) {
+        printf("Использование: %s <путь к файлу>\n", argv[0]);
+        return 1;
+    }
 
     // Инициализация PJSUA
     pjsua_create();
@@ -76,7 +104,7 @@ int main()
     // Инициализация PJSUA
     pjsua_init(&cfg, &log_cfg, &media_cfg);
 
-    // Открытие RTP-транспорта (для передачи медиа)
+    // Открытие RTP-транспорта
     pjsua_transport_config transport_cfg;
     pjsua_transport_config_default(&transport_cfg);
     transport_cfg.port = 5060;
@@ -85,40 +113,23 @@ int main()
     // Запуск PJSUA
     pjsua_start();
 
-    // Создаем memory pool для пользовательского медиа порта
+    // Открываем файл для передачи
+    if (open_file(argv[1]) != PJ_SUCCESS) {
+        return 1;
+    }
+
+    // Создаем memory pool для медиапорта
     pool = pjsua_pool_create("media_pool", 512, 512);
 
-    // Создаем пользовательский медиа-порт
+    // Создаем и подключаем медиапорт к конференц-мосту
     create_custom_media_port(pool);
-
-    // Подключаем его к конференц мосту
     connect_custom_port_to_conference();
 
-    // Ожидаем событий (например, звонков или подключения к конференции)
+    // Ожидаем событий
     pjsua_handle_events(NULL);
 
     // Остановка PJSUA
     pjsua_destroy();
-    
-    return 0;
-}
-int main()
-{
-    // Открытие текстового файла перед началом передачи данных
-    pj_status_t status = open_text_file("path/to/textfile.txt");
-    if (status != PJ_SUCCESS) {
-        PJ_LOG(1, (THIS_FILE, "Ошибка открытия текстового файла"));
-        return -1;
-    }
 
-    // Инициализация PJSUA и настройка порта конференции
-    ...
-
-    // После окончания передачи данных, закрываем файл
-    close_text_file();
-
-    // Остановка PJSUA
-    pjsua_destroy();
-    
     return 0;
 }
