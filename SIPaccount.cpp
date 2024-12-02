@@ -1,262 +1,115 @@
-#include <pjsua-lib/pjsua.h>
-#include <pjmedia/port.h>
-#include <stdio.h>
+Для сборки PJSIP в виде библиотеки для использования на платформе FreeRTOS необходимо выполнить несколько шагов: адаптировать PJSIP под архитектуру, интегрировать с FreeRTOS и собрать проект. Вот подробная инструкция:
 
-#define THIS_FILE "custom_media_file_send.c"
-#define PORT "custom-media-port"
+Шаг 1: Подготовка исходников PJSIP
 
-static pjsua_conf_port_id conf_port_id;
-static pjmedia_port *custom_media_port;
-static FILE *file_to_send = NULL;
+Клонируйте PJSIP:
+Скачайте исходный код PJSIP из официального репозитория:
+git clone https://github.com/pjsip/pjproject.git
+cd pjproject
+Создайте файл config_site.h:
+В корневом каталоге библиотеки создайте файл config_site.h для настройки сборки.
+Минимальная конфигурация для FreeRTOS:
 
-#define FRAME_SIZE 320 // размер фрейма в байтах
+#define PJ_CONFIG_MINIMAL_SIZE 1
+#include <pj/config_site_sample.h>
 
-// Открытие файла для передачи
-pj_status_t open_file(const char *file_path)
-{
-    file_to_send = fopen(file_path, "rb");
-    if (!file_to_send) {
-        PJ_LOG(1, (THIS_FILE, "Не удалось открыть файл: %s", file_path));
-        return PJ_EIO;
-    }
-    return PJ_SUCCESS;
+// Уровень логирования (уменьшить для экономии ресурсов)
+#define PJ_LOG_MAX_LEVEL 3
+
+// Отключение POSIX функций
+#define PJ_HAS_STDIO 0
+#define PJ_HAS_ERRNO_VAR 0
+
+// Замена select() и других POSIX функций
+#define PJSIP_DONT_USE_SYS_SELECT 1
+#define PJ_IOQUEUE_MAX_HANDLES 16
+
+// FreeRTOS и стек TCP/IP
+#define PJ_HAS_THREADS 1
+#define PJ_OS_HAS_CHECK_STACK 0
+#define PJ_TIMER_USE_RBTREE 1
+
+// Настройка LwIP (если используется)
+#define PJ_HAS_LWIP 1
+#define LWIP_COMPAT_SOCKETS 1
+Удалите ненужные модули PJSIP:
+Если вам не требуется поддержка видео или сложных медиа-функций, удалите модули pjmedia-videodev и связанные исходники из проекта.
+Шаг 2: Адаптация PJSIP для FreeRTOS
+
+Реализуйте адаптер FreeRTOS для потоков:
+PJSIP ожидает POSIX API для управления потоками, но FreeRTOS использует свои примитивы. Вам нужно реализовать функции-обертки, которые будут использовать FreeRTOS.
+Пример реализации:
+
+#include "FreeRTOS.h"
+#include "task.h"
+
+void pj_thread_sleep(unsigned msec) {
+    vTaskDelay(pdMS_TO_TICKS(msec));
 }
-
-// Закрытие файла после передачи
-void close_file()
-{
-    if (file_to_send) {
-        fclose(file_to_send);
-        file_to_send = NULL;
-    }
+Настройка работы с TCP/IP стеком:
+Если вы используете LwIP, подключите его API для работы с сокетами. Например, вместо POSIX вызовов socket(), select(), используйте вызовы LwIP:
+#define pj_sock_socket lwip_socket
+#define pj_sock_bind lwip_bind
+#define pj_sock_connect lwip_connect
+Настройка таймеров:
+Реализуйте pj_gettickcount() для использования системного времени FreeRTOS:
+pj_uint32_t pj_gettickcount(void) {
+    return xTaskGetTickCount() * portTICK_PERIOD_MS;
 }
-// Функция для передачи кадров через медиапорт
-static pj_status_t custom_get_frame(pjmedia_port *port, pjmedia_frame *frame)
-{
-    if (!file_to_send) {
-        PJ_LOG(1, (THIS_FILE, "Файл не открыт для передачи"));
-        return PJ_EIO;
-    }
+Шаг 3: Настройка сборки проекта
 
-    // Читаем данные из файла и записываем в фрейм
-    size_t bytes_read = fread(frame->buf, 1, FRAME_SIZE, file_to_send);
+Создайте проект для библиотеки в STM32CubeIDE:
+В STM32CubeIDE выберите File -> New -> STM32 Project.
+Настройте процессор (MCU), подключите FreeRTOS через CubeMX.
+Добавьте исходники PJSIP:
+Скопируйте следующие папки из PJSIP в ваш проект:
+pjlib
+pjlib-util
+pjsip
+pjmedia (если используется).
+Убедитесь, что вы скопировали только те исходники, которые вам действительно нужны.
+Подключите пути к заголовкам:
+В Project -> Properties -> C/C++ Build -> Settings -> MCU GCC Compiler -> Includes добавьте:
+${workspace_loc:/YourProject/pjlib/include}
+${workspace_loc:/YourProject/pjsip/include}
+${workspace_loc:/YourProject/pjlib-util/include}
+Укажите пути к исходникам для сборки:
+В Project -> Properties -> C/C++ General -> Paths and Symbols -> Source Location укажите пути к папкам pjlib, pjlib-util, pjsip.
+Шаг 4: Настройка компиляции
 
-    if (bytes_read < FRAME_SIZE) {
-        // Если достигли конца файла, закрываем и останавливаем передачу
-        PJ_LOG(3, (THIS_FILE, "Передача файла завершена"));
-        close_file();
-        frame->type = PJMEDIA_FRAME_TYPE_NONE; // Устанавливаем тип как NONE, чтобы завершить
-    } else {
-        frame->size = FRAME_SIZE;  // Размер данных
-        frame->type = PJMEDIA_FRAME_TYPE_AUDIO; // Используем тип аудиофрейма
-    }
+Добавьте параметры компиляции:
+В MCU GCC Compiler -> Miscellaneous добавьте:
+-DPJ_HAS_LWIP=1
+-DLWIP_COMPAT_SOCKETS=1
+-Dpj_gettickcount=xTaskGetTickCount
+Оптимизация памяти:
+Включите оптимизацию кода для микроконтроллеров:
+Optimization Level: -O2
+MCU GCC Linker -> Miscellaneous:
+-Wl,--gc-sections
+Отключите точку входа main():
+Если это библиотека, то в MCU GCC Linker -> General выберите Do not use the standard startup files.
+Шаг 5: Сборка как библиотеки
 
-    return PJ_SUCCESS;
-}
+Соберите проект:
+После успешной сборки STM32CubeIDE сгенерирует объектные файлы .o.
+Создайте статическую библиотеку .a:
+Используйте arm-none-eabi-ar для упаковки объектных файлов в библиотеку:
+arm-none-eabi-ar rcs libpjsip.a *.o
+Подключите библиотеку к другим проектам:
+Перенесите libpjsip.a в конечный проект, работающий с FreeRTOS.
+Подключите заголовки PJSIP.
+Шаг 6: Тестирование
 
-// Создание медиапорта
-pj_status_t create_custom_media_port(pj_pool_t *pool)
-{
-    pj_status_t status;
-
-    status = pjmedia_port_create(pool, PORT, 8000, 1, FRAME_SIZE, 16, 0, &custom_media_port);
+Создайте тестовый проект:
+Создайте приложение, которое инициализирует PJSIP:
+#include <pjsip.h>
+void test_pjsip() {
+    pj_status_t status = pj_init();
     if (status != PJ_SUCCESS) {
-        PJ_LOG(1, (THIS_FILE, "Ошибка создания медиа порта"));
-        return status;
-    }
-
-    // Присваиваем функцию для получения фреймов
-    custom_media_port->get_frame = &custom_get_frame;
-
-    return PJ_SUCCESS;
-}
-void connect_custom_port_to_conference()
-{
-    pj_status_t status = pjsua_conf_add_port(pjsua_get_conf_bridge(), custom_media_port, &conf_port_id);
-    if (status != PJ_SUCCESS) {
-        PJ_LOG(1, (THIS_FILE, "Ошибка добавления медиа порта в конференцию"));
-        return;
-    }
-
-    // Подключаем порт к конференц мосту
-    pjsua_conf_connect(conf_port_id, 0);  // Передаем данные в общий конференц-мост
-}
-int main(int argc, char *argv[])
-{
-    pjsua_config cfg;
-    pjsua_logging_config log_cfg;
-    pjsua_media_config media_cfg;
-    pj_pool_t *pool;
-
-    if (argc < 2) {
-        printf("Использование: %s <путь к файлу>\n", argv[0]);
-        return 1;
-    }
-
-    // Инициализация PJSUA
-    pjsua_create();
-
-    // Конфигурация PJSUA
-    pjsua_config_default(&cfg);
-    pjsua_logging_config_default(&log_cfg);
-    pjsua_media_config_default(&media_cfg);
-
-    // Инициализация PJSUA
-    pjsua_init(&cfg, &log_cfg, &media_cfg);
-
-    // Открытие RTP-транспорта
-    pjsua_transport_config transport_cfg;
-    pjsua_transport_config_default(&transport_cfg);
-    transport_cfg.port = 5060;
-    pjsua_transport_create(PJSIP_TRANSPORT_UDP, &transport_cfg, NULL);
-
-    // Запуск PJSUA
-    pjsua_start();
-
-    // Открываем файл для передачи
-    if (open_file(argv[1]) != PJ_SUCCESS) {
-        return 1;
-    }
-
-    // Создаем memory pool для медиапорта
-    pool = pjsua_pool_create("media_pool", 512, 512);
-
-    // Создаем и подключаем медиапорт к конференц-мосту
-    create_custom_media_port(pool);
-    connect_custom_port_to_conference();
-
-    // Ожидаем событий
-    pjsua_handle_events(NULL);
-
-    // Остановка PJSUA
-    pjsua_destroy();
-
-    return 0;
-}
-
-
-
-#include <pjsua-lib/pjsua.h>
-
-#define THIS_FILE "APP"
-#define FRAME_SIZE 320  // Размер фрейма для аудио 20 мс с частотой 8 кГц
-
-static FILE *file_to_send = NULL;
-
-// Функция для чтения данных из файла и отправки в RTP фреймы
-static pj_status_t custom_get_frame(pjmedia_port *port, pjmedia_frame *frame) {
-    if (!file_to_send) {
-        PJ_LOG(1, (THIS_FILE, "Файл не открыт для отправки"));
-        return PJ_EIO;
-    }
-
-    // Чтение данных из файла
-    size_t bytes_read = fread(frame->buf, 1, FRAME_SIZE, file_to_send);
-    
-    // Если конец файла — перематываем на начало
-    if (bytes_read < FRAME_SIZE) {
-        rewind(file_to_send);
-        bytes_read = fread(frame->buf, 1, FRAME_SIZE, file_to_send);
-    }
-
-    // Устанавливаем размер и тип фрейма
-    frame->size = bytes_read;
-    frame->type = PJMEDIA_FRAME_TYPE_AUDIO;
-
-    return PJ_SUCCESS;
-}
-
-// Функция создания медиапорта для отправки файла
-pj_status_t create_custom_media_port(pjmedia_port **p_port, pj_pool_t *pool) {
-    pjmedia_port *port;
-    pj_status_t status;
-
-    // Открытие файла для передачи
-    file_to_send = fopen("file_to_send.raw", "rb");
-    if (!file_to_send) {
-        PJ_LOG(1, (THIS_FILE, "Ошибка открытия файла"));
-        return PJ_EIO;
-    }
-
-    // Создаем медиапорт с частотой 8 кГц и 160 сэмплов на фрейм (20 мс)
-    status = pjmedia_port_create(pool, 8000, 1, FRAME_SIZE, 16, FRAME_SIZE, &port);
-    if (status != PJ_SUCCESS) {
-        PJ_LOG(1, (THIS_FILE, "Ошибка создания медиапорта"));
-        return status;
-    }
-
-    // Устанавливаем свою функцию для получения фреймов
-    port->get_frame = &custom_get_frame;
-
-    *p_port = port;
-    return PJ_SUCCESS;
-}
-
-// Функция, вызываемая при установке медиа состояния вызова
-void on_call_media_state(pjsua_call_id call_id) {
-    pjsua_call_info call_info;
-    pjsua_call_get_info(call_id, &call_info);
-
-    if (call_info.media_status == PJSUA_CALL_MEDIA_ACTIVE) {
-        // Получаем конференц-порт вызова
-        int call_conf_port = pjsua_call_get_conf_port(call_id);
-
-        // Создаем свой медиапорт для передачи файла
-        pj_pool_t *pool = pjsua_pool_create("mypool", 1000, 1000);
-        pjmedia_port *custom_port;
-        create_custom_media_port(&custom_port, pool);
-
-        // Подключаем медиапорт к конференц-мосту
-        pjsua_conf_add_port(pjsua_get_conf_bridge(), custom_port, NULL);
-
-        // Подключаем наш медиапорт к звонку для отправки данных
-        pjsua_conf_connect(pjsua_conf_get_port(custom_port), call_conf_port);
+        // Обработка ошибок
     }
 }
-
-int main() {
-    // Инициализация PJSUA
-    pjsua_create();
-
-    // Конфигурация PJSUA
-    pjsua_config cfg;
-    pjsua_media_config media_cfg;
-    pjsua_config_default(&cfg);
-    pjsua_media_config_default(&media_cfg);
-
-    // Инициализация библиотеки
-    pj_status_t status = pjsua_init(&cfg, NULL, &media_cfg);
-    if (status != PJ_SUCCESS) {
-        pjsua_perror(THIS_FILE, "Ошибка инициализации PJSUA", status);
-        return 1;
-    }
-
-    // Добавление транспортов и запуск
-    pjsua_transport_config transport_cfg;
-    pjsua_transport_config_default(&transport_cfg);
-    status = pjsua_transport_create(PJSIP_TRANSPORT_UDP, &transport_cfg, NULL);
-    if (status != PJ_SUCCESS) {
-        pjsua_perror(THIS_FILE, "Ошибка создания транспорта", status);
-        return 1;
-    }
-
-    // Запуск PJSUA
-    status = pjsua_start();
-    if (status != PJ_SUCCESS) {
-        pjsua_perror(THIS_FILE, "Ошибка запуска PJSUA", status);
-        return 1;
-    }
-
-    // Установка вызова (примерный номер)
-    pjsua_call_id call_id;
-    pj_str_t uri = pj_str("sip:destination@sipprovider.com");
-    pjsua_call_make_call(0, &uri, NULL, NULL, NULL, &call_id);
-
-    // Ожидание завершения вызова
-    pjsua_handle_events(5000);
-
-    // Остановка PJSUA
-    pjsua_destroy();
-
-    return 0;
-}
+Проверьте работу:
+Запустите тестовое приложение на STM32 с FreeRTOS. Убедитесь, что PJSIP успешно инициализируется и выполняет базовые операции.
+Если вы столкнетесь с проблемами на этапе сборки, адаптации PJSIP или интеграции с FreeRTOS, напишите, и я помогу!
