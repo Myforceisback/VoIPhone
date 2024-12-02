@@ -1,98 +1,79 @@
-EpConfig ep_cfg;
-ep_cfg.uaConfig.threadCnt = 0; // Отключение потоков для аудио устройств
-ep_cfg.medConfig.hasIoqueue = PJ_FALSE; // Отключение использования аудио устройств
-ep.libInit(ep_cfg);
+Чтобы собрать проект с PJSIP в STM32CubeIDE в виде статической библиотеки (.a), нужно немного изменить подход. Вот пошаговый план для достижения этой цели:
 
-class CustomMediaPort : public AudioMedia {
-private:
-    vector<uint8_t> binaryData;  // Данные для передачи
-    unsigned frameSize;          // Размер одного фрейма
+1. Создайте новый проект для библиотеки
+Создайте новый проект в STM32CubeIDE:
+В меню выберите File -> New -> STM32 Project.
+Настройте MCU и периферию с помощью CubeMX.
+Выберите "Empty" в разделе выбора шаблона для минимального кода.
+Настройте проект как библиотеку:
+Откройте Project -> Properties -> C/C++ Build -> Settings.
+В разделе MCU GCC Linker -> General выберите Do not use the standard startup files (т. е., не добавляйте точку входа, так как это библиотека).
+В разделе MCU GCC Archiver -> Archive Format установите формат lib<name>.a.
+2. Добавьте PJSIP в проект
+2.1. Подключение библиотек PJSIP
 
-public:
-    CustomMediaPort(const vector<uint8_t>& data, unsigned frame_size)
-        : binaryData(data), frameSize(frame_size) {}
+Соберите PJSIP вручную для ARM:
+Соберите PJSIP с помощью arm-none-eabi-gcc (см. предыдущие инструкции).
+Получите статические библиотеки (libpjsip.a, libpjlib.a, и т.д.).
+Добавьте PJSIP в проект:
+Переместите собранные библиотеки и заголовки PJSIP в папку проекта STM32CubeIDE. Например:
+Заголовки: YourProject/include/pjsip.
+Библиотеки: YourProject/libs.
+Подключите пути к заголовкам и библиотекам:
+Project -> Properties -> C/C++ Build -> Settings -> MCU GCC Compiler -> Includes:
+${workspace_loc:/YourProject/include/pjsip}
+Project -> Properties -> C/C++ Build -> Settings -> MCU GCC Linker -> Libraries:
+В поле Libraries добавьте pjsip, pjlib, pjmedia, и т.д.
+В поле Library search path укажите путь к YourProject/libs.
+2.2. Добавление конфигурации для STM32
 
-    // Имитация получения данных
-    virtual void getFrame(AudioFrame &frame) override {
-        // Генерируем "аудио" данные
-        frame.buf = (void*)binaryData.data();
-        frame.size = frameSize;
-        frame.type = PJMEDIA_FRAME_TYPE_AUDIO;  // Тип - аудио фрейм
+Создайте файл config_site.h для минимальной конфигурации PJSIP:
 
-        cout << "Sending fake audio data of size: " << frame.size << endl;
+#define PJ_CONFIG_MINIMAL_SIZE 1
+#include <pj/config_site_sample.h>
+
+#define PJ_HAS_STDIO 0
+#define PJ_LOG_MAX_LEVEL 3
+#define PJ_ENABLE_EXTRA_CHECK 0
+#define PJSIP_MAX_URL_SIZE 512
+
+// Для работы с LwIP
+#define PJSIP_DONT_USE_SYS_SELECT 1
+#define PJ_HAS_HIGH_RES_TIMER 0
+Добавьте путь к config_site.h в список заголовков.
+
+3. Адаптируйте проект
+Удалите точку входа main():
+Поскольку это библиотека, точка входа в код не нужна. Убедитесь, что файл main.c не используется.
+Создайте свои модули:
+В файлах библиотеки (.c или .cpp) создайте функции, которые будут использоваться конечными пользователями библиотеки. Например:
+#include <pjsip.h>
+
+void init_pjsip() {
+    // Пример: Инициализация PJSIP
+    pj_status_t status = pj_init();
+    if (status != PJ_SUCCESS) {
+        // Обработка ошибки
     }
-
-    // Обработка полученных данных
-    virtual void putFrame(const AudioFrame &frame) override {
-        // Обрабатываем полученные данные
-        cout << "Received frame of size: " << frame.size << endl;
-    }
-};
-
-Call *call = new Call(ep);
-CallOpParam prm;
-prm.statusCode = PJSIP_SC_OK;
-
-call->makeCall("sip:destination@domain.com", prm);
-
-// Ожидаем соединения
-pj_thread_sleep(1000);
-
-CallInfo ci = call->getInfo();
-AudioMedia *media = static_cast<AudioMedia*>(call->getMedia(ci.media[0].index));
-
-// Создаем кастомный медиа-порт для передачи фейковых аудиофреймов
-vector<uint8_t> binaryData(160, 0x55);  // Пример фейковых данных
-CustomMediaPort *mediaPort = new CustomMediaPort(binaryData, 160);
-
-// Подключаем кастомный порт к звонку
-mediaPort->startTransmit(*media);
-
-pj_size_t pjmedia_codec_g711_encode(pjmedia_codec *codec,
-                                    const pjmedia_frame *input,
-                                    pjmedia_frame *output)
-{
-    // Ваша логика по замене аудио на бинарные данные
-    memcpy(output->buf, input->buf, input->size); // Передача данных как есть
-    output->size = input->size;
-    return PJ_SUCCESS;
 }
+Подключите необходимые библиотеки STM32:
+Если библиотека будет использовать HAL, LwIP или FreeRTOS, убедитесь, что все пути к заголовкам и конфигурации добавлены.
+4. Настройка линковки
+Отключите точку входа, если она включена:
+В MCU GCC Linker -> General проверьте, что отсутствует точка входа (_start или main).
+Убедитесь, что статические библиотеки PJSIP включены в сборку:
+Проверяйте, чтобы в итоговую библиотеку .a попадали только модули, которые требуются пользователю.
+5. Сборка библиотеки
+Соберите проект:
+Нажмите Project -> Build Project.
+В папке Debug или Release должен появиться файл .a. Например:
+libYourProject.a
+Проверьте состав библиотеки:
+Используйте команду arm-none-eabi-ar для проверки:
+arm-none-eabi-ar -t Debug/libYourProject.a
+6. Использование библиотеки
+Чтобы использовать собранную библиотеку в других проектах:
 
-#include <stdio.h>
-
-// Глобальная переменная для файла, чтобы открыть его один раз
-static FILE *binary_file = NULL;
-
-// Функция кодирования с чтением из файла
-pj_size_t pjmedia_codec_g711_encode(pjmedia_codec *codec,
-                                    const pjmedia_frame *input,
-                                    pjmedia_frame *output)
-{
-    // Размер буфера для данных, которые будут передаваться
-    size_t bytes_to_read = output->size;
-    
-    // Если файл еще не открыт, открываем его
-    if (binary_file == NULL) {
-        binary_file = fopen("binary_data.bin", "rb");
-        if (binary_file == NULL) {
-            PJ_LOG(3, ("G711", "Failed to open binary file for reading"));
-            return PJ_EFILE;
-        }
-    }
-
-    // Читаем данные из файла в буфер output
-    size_t bytes_read = fread(output->buf, 1, bytes_to_read, binary_file);
-
-    // Если данные закончились, закрываем файл и завершаем
-    if (bytes_read < bytes_to_read) {
-        PJ_LOG(3, ("G711", "Reached end of file, closing binary file."));
-        fclose(binary_file);
-        binary_file = NULL;
-        memset(output->buf + bytes_read, 0, bytes_to_read - bytes_read); // Заполнение остатка нулями
-    }
-
-    output->size = bytes_read;  // Устанавливаем фактический размер данных
-    output->type = PJMEDIA_FRAME_TYPE_AUDIO;
-
-    return PJ_SUCCESS;
-}
+Подключите файл libYourProject.a в новый проект.
+Убедитесь, что пути к заголовкам и зависимостям (например, HAL, LwIP, PJSIP) указаны корректно.
+В проекте вызывайте функции, реализованные в библиотеке.
