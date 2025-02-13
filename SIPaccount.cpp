@@ -1,125 +1,167 @@
-Ошибка `missing BOOST_INCLUDE_DIR` указывает на то, что CMake не может автоматически найти путь к заголовочным файлам Boost. Это может происходить, если Boost установлен в нестандартное место или CMake не настроен правильно. Давай разберем, как это исправить.
+Привет! Для создания HTML-страницы регистрации с использованием Drogon Framework на C++ и последующего перенаправления пользователя на страницу настроек, вам нужно выполнить несколько шагов. Вот пример того, как это можно сделать:
 
----
+### 1. Установка Drogon Framework
+Если вы еще не установили Drogon, вы можете сделать это с помощью CMake:
 
-### 1. Убедись, что Boost установлен
-Проверь, что Boost действительно установлен через `apt`:
 ```bash
-dpkg -l | grep libboost
+git clone https://github.com/drogonframework/drogon
+cd drogon
+mkdir build
+cd build
+cmake ..
+make && sudo make install
 ```
 
-Если Boost не установлен, установи его:
+### 2. Создание проекта
+Создайте новый проект и добавьте необходимые файлы:
+
 ```bash
-sudo apt install libboost-all-dev
+mkdir my_drogon_app
+cd my_drogon_app
 ```
 
----
+### 3. Создание HTML-страницы регистрации
+Создайте файл `register.html` в папке `views`:
 
-### 2. Укажи путь к Boost вручную
-Если CMake не может найти Boost автоматически, укажи путь к Boost вручную в `CMakeLists.txt`. Вот пример:
+```html
+<!-- views/register.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Регистрация</title>
+</head>
+<body>
+    <h1>Регистрация</h1>
+    <form action="/register" method="post">
+        <label for="login">Логин:</label>
+        <input type="text" id="login" name="login" required><br><br>
+        <label for="password">Пароль:</label>
+        <input type="password" id="password" name="password" required><br><br>
+        <button type="submit">Зарегистрироваться</button>
+    </form>
+</body>
+</html>
+```
+
+### 4. Создание HTML-страницы настроек
+Создайте файл `settings.html` в папке `views`:
+
+```html
+<!-- views/settings.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Настройки</title>
+</head>
+<body>
+    <h1>Настройки</h1>
+    <p>Добро пожаловать в настройки!</p>
+</body>
+</html>
+```
+
+### 5. Создание контроллера для обработки запросов
+Создайте файл `RegisterController.cc`:
+
+```cpp
+#include <drogon/drogon.h>
+
+using namespace drogon;
+
+class RegisterController : public HttpController<RegisterController>
+{
+  public:
+    METHOD_LIST_BEGIN
+    ADD_METHOD_TO(RegisterController::showRegisterPage, "/register", Get);
+    ADD_METHOD_TO(RegisterController::handleRegister, "/register", Post);
+    METHOD_LIST_END
+
+    void showRegisterPage(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback)
+    {
+        auto resp = HttpResponse::newHttpViewResponse("register");
+        callback(resp);
+    }
+
+    void handleRegister(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback)
+    {
+        auto json = req->getJsonObject();
+        std::string login = (*json)["login"].asString();
+        std::string password = (*json)["password"].asString();
+
+        // Здесь должна быть проверка логина и пароля в базе данных
+        // Например, если проверка прошла успешно:
+        if (login == "user" && password == "password")
+        {
+            auto resp = HttpResponse::newRedirectionResponse("/settings");
+            callback(resp);
+        }
+        else
+        {
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setStatusCode(k403Forbidden);
+            resp->setBody("Неверный логин или пароль");
+            callback(resp);
+        }
+    }
+};
+
+class SettingsController : public HttpController<SettingsController>
+{
+  public:
+    METHOD_LIST_BEGIN
+    ADD_METHOD_TO(SettingsController::showSettingsPage, "/settings", Get);
+    METHOD_LIST_END
+
+    void showSettingsPage(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback)
+    {
+        auto resp = HttpResponse::newHttpViewResponse("settings");
+        callback(resp);
+    }
+};
+
+int main()
+{
+    app().registerController(std::make_shared<RegisterController>());
+    app().registerController(std::make_shared<SettingsController>());
+    app().setDocumentRoot("./views");
+    app().addListener("0.0.0.0", 8080);
+    app().run();
+    return 0;
+}
+```
+
+### 6. Сборка и запуск проекта
+Создайте `CMakeLists.txt` для сборки проекта:
 
 ```cmake
 cmake_minimum_required(VERSION 3.10)
-project(YourProject)
+project(my_drogon_app)
 
-# Указываем путь к Boost вручную
-set(BOOST_INCLUDEDIR "/usr/include")  # Заголовочные файлы Boost
-set(BOOST_LIBRARYDIR "/usr/lib/x86_64-linux-gnu")  # Библиотеки Boost
+set(CMAKE_CXX_STANDARD 14)
 
-# Ищем Boost
-find_package(Boost REQUIRED COMPONENTS system)
-
-if(Boost_FOUND)
-    include_directories(${Boost_INCLUDE_DIRS})
-    add_executable(YourProject main.cpp)
-    target_link_libraries(YourProject ${Boost_LIBRARIES})
-else()
-    message(FATAL_ERROR "Boost не найден!")
-endif()
-```
-
----
-
-### 3. Проверь пути к Boost
-Убедись, что заголовочные файлы Boost находятся в `/usr/include/boost`, а библиотеки — в `/usr/lib/x86_64-linux-gnu`. Проверь это вручную:
-```bash
-ls /usr/include/boost
-ls /usr/lib/x86_64-linux-gnu | grep boost
-```
-
-Если пути отличаются, укажи их в `CMakeLists.txt`.
-
----
-
-### 4. Используй `vcpkg` (если не помогает)
-Если стандартная установка через `apt` не работает, попробуй установить Boost через `vcpkg`:
-1. Установи `vcpkg`:
-   ```bash
-   git clone https://github.com/microsoft/vcpkg
-   ./vcpkg/bootstrap-vcpkg.sh
-   ```
-
-2. Установи Boost:
-   ```bash
-   ./vcpkg/vcpkg install boost
-   ```
-
-3. Укажи путь к `vcpkg` в Qt Creator или в `CMakeLists.txt`:
-   ```cmake
-   set(CMAKE_TOOLCHAIN_FILE "/путь/к/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
-   ```
-
----
-
-### 5. Пример `CMakeLists.txt` с Drogon и Boost
-Если ты также используешь Drogon, вот пример `CMakeLists.txt`:
-
-```cmake
-cmake_minimum_required(VERSION 3.14)
-project(YourProject)
-
-# Указываем путь к Boost
-set(BOOST_INCLUDEDIR "/usr/include")
-set(BOOST_LIBRARYDIR "/usr/lib/x86_64-linux-gnu")
-
-# Ищем Boost
-find_package(Boost REQUIRED COMPONENTS system)
-
-# Ищем Drogon
 find_package(Drogon REQUIRED)
 
-if(Boost_FOUND AND Drogon_FOUND)
-    include_directories(${Boost_INCLUDE_DIRS})
-    add_executable(YourProject main.cpp)
-    target_link_libraries(YourProject PRIVATE Boost::system Drogon::Drogon)
-else()
-    message(FATAL_ERROR "Boost или Drogon не найдены!")
-endif()
+add_executable(my_drogon_app RegisterController.cc)
+
+target_link_libraries(my_drogon_app PRIVATE Drogon::Drogon)
 ```
 
----
+Теперь соберите и запустите проект:
 
-### 6. Настройки Qt Creator
-1. Открой проект в Qt Creator.
-2. Перейди в **Projects** → **Build & Run** → **CMake**.
-3. В разделе **CMake configuration** добавь:
-   ```
-   -DBOOST_INCLUDEDIR=/usr/include
-   -DBOOST_LIBRARYDIR=/usr/lib/x86_64-linux-gnu
-   ```
+```bash
+mkdir build
+cd build
+cmake ..
+make
+./my_drogon_app
+```
 
----
+### 7. Проверка работы
+Откройте браузер и перейдите по адресу `http://localhost:8080/register`. Вы увидите страницу регистрации. После ввода логина и пароля и нажатия на кнопку "Зарегистрироваться", если логин и пароль верны, вы будете перенаправлены на страницу настроек.
 
-### 7. Собери проект
-1. Нажми **Build** в Qt Creator.
-2. Если сборка прошла успешно, запусти проект.
+### 8. Работа с базой данных
+Для проверки логина и пароля в базе данных, вам нужно будет использовать ORM Drogon или напрямую работать с SQL-запросами. Это уже зависит от вашей конкретной реализации базы данных.
 
----
-
-### 8. Если всё равно не работает
-Проверь:
-- Версию CMake (должна быть не ниже 3.10).
-- Пути к Boost и Drogon.
-- Логи CMake в Qt Creator.
-
-Если проблема сохраняется, напиши, я помогу разобраться! 😊
+Надеюсь, это поможет вам начать работу с Drogon Framework! Если у вас есть дополнительные вопросы, не стесняйтесь задавать.
