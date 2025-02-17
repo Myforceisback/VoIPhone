@@ -1,199 +1,130 @@
-#include "SIPPresenter.h"
-#include "MainForm.h"
-#include "IncomigCallForm.h"
-#include "SIPModel.h"
-#include "SIPaccount.h"
-VoIPhone::SIPPresenter::SIPPresenter(MainForm^ v) {
-	model = new SIPModel;
-	view = v;
-	if (model->initPJ()) {
-		view->sendFile += gcnew System::Action(this, &SIPPresenter::OnSendFileButtonClicked);
-		view->sendMsg += gcnew System::Action(this, &SIPPresenter::OnSendMessageButtonClicked);
-		view->makeCall += gcnew System::Action(this, &SIPPresenter::OnMakeCallButtonClicked);
-		view->updateSelectContact += gcnew System::Action(this, &SIPPresenter::OnUpdateSelectedContact);
-		view->addContactButtonClicked += gcnew System::Action(this, &SIPPresenter::OnAddContactButtonClicked);
-		view->destroyPJ += gcnew System::Action(this, &SIPPresenter::destroyLib);
-		view->LoginRegButtonClicked += gcnew System::Action(this, &SIPPresenter::OnLoginRegButtonClicked);
-		view->ExitAccButtonClicked += gcnew System::Action(this, &SIPPresenter::OnExitButtonClicked);
-	}
-	else
-		System::Windows::Forms::MessageBox::Show("������ ������������� PJSIP");
-}
-void VoIPhone::SIPPresenter::OnLoginRegButtonClicked() {
-	if (view->_accRegFlag == ACC_NOT_REGISTERED) {
-		RegistrationForm^ regForm = gcnew RegistrationForm();
-		regForm->ShowDialog();
-		ArrayList^ accountInfo = regForm->getData();
-		if (model->loginAccount(accountInfo, this)) {
-			view->loginRegButton->Text = L"�����";
-			view->loginAccountInfo->Text = L"SIP ID: " + accountInfo[3]->ToString() + L"@" + accountInfo[2]->ToString();
-			view->_accRegFlag = ACC_IS_REGISTERED;
-		}
-		else
-			System::Windows::Forms::MessageBox::Show("������ ������������ ����� ��� ������!");
-	}
-	else if (view->_accRegFlag == ACC_IS_REGISTERED) {
-		if (MessageBox::Show(
-			L"�� ������������� ������ �����?",
-			L"�����",
-			MessageBoxButtons::YesNo,
-			MessageBoxIcon::Exclamation
-		) == System::Windows::Forms::DialogResult::Yes) {
-			OnExitButtonClicked();
-		}
-	}
-}
-void VoIPhone::SIPPresenter::OnExitButtonClicked() {
-	if (model->exitAccount()) {
-		view->loginRegButton->Text = L"�����";
-		view->loginAccountInfo->Text = L"������� � SIP";
-		view->_accRegFlag = ACC_NOT_REGISTERED;
-		view->contactsListBox->Items->Clear();
-		view->contactConInfoLabel->Text = "";
-	}
-}
-void VoIPhone::SIPPresenter::OnAddContactButtonClicked()
-{
-	if (view->_accRegFlag == ACC_IS_REGISTERED) {
-		view->contactsListBox->Items->Add(model->addContact());
-	}
-	else if (view->_accRegFlag == ACC_NOT_REGISTERED) {
-		System::Windows::Forms::MessageBox::Show("��� ������ ������� � �������");
-	}
-}
-void VoIPhone::SIPPresenter::destroyLib()
-{
-	if (!this->_destroy)
-		model->destroyPJ();
-	this->_destroy = 1;
-}
-void VoIPhone::SIPPresenter::OnUpdateSelectedContact()
-{
-	if (view->contactsListBox->SelectedItem != nullptr) {
-		view->contactConInfoLabel->Text = "";
-		auto tx = view->contactsListBox->SelectedItem->ToString();
-		array<System::String^>^ parts = tx->Split('-');
-		if (parts[0] == "")
-			parts[0] = "def";
-		for each (String ^ %part in parts) {
-			part = part->Substring(0, 1) + part->Substring(1);
-		}
-		System::String^ correctedString = System::String::Join("\r\n", parts);
-		view->contactConInfoLabel->Text = correctedString;
-		view->chatRichTextBox->Clear();
-	}
-}
-void VoIPhone::SIPPresenter::OnMakeCallButtonClicked()
-{
-	if (view->_accRegFlag == ACC_IS_REGISTERED) {
-		if (view->_inActiveCall == ACC_CALL_NO_ACTIVE) {
-			if (view->contactConInfoLabel->Text != "") {
-				model->makeCallSs(view->contactConInfoLabel->Text->ToString());
-				view->_inActiveCall = ACC_CALL_ACTIVE;
-				view->makeCallButton->Text = "���������";
-			}
-			else
-				System::Windows::Forms::MessageBox::Show("�� �� ������� ���� �������");
-		}
-		else if (view->_inActiveCall == ACC_CALL_ACTIVE) {
-			if (view->chatRichTextBox->Text != "") {
-				//view->chatRichTextBox->SelectedText = view->chatRichTextBox->Text + System::Environment::NewLine + "���������� ���������...";
-			}
-			model->hangupCalls();
-			view->_inActiveCall = ACC_CALL_NO_ACTIVE;
-			view->makeCallButton->Text = "�����";
-		}
-	}
-	else if (view->_accRegFlag == ACC_NOT_REGISTERED)
-		System::Windows::Forms::MessageBox::Show("��� ������ ������� � �������");
-}
-void VoIPhone::SIPPresenter::OnSendMessageButtonClicked()
-{
-	if (view->_accRegFlag == ACC_IS_REGISTERED) {
-		model->sendMessage(view->sendMessageTexBox->Text->ToString(), view->contactConInfoLabel->Text->ToString());
-		view->sendMessageTexBox->Clear();
-	}
-	else if (view->_accRegFlag == ACC_NOT_REGISTERED) {
-		MessageBox::Show("��� ������ ������� � �������");
-	}
-}
-void VoIPhone::SIPPresenter::OnSendFileButtonClicked()
-{
-	if (view->_accRegFlag == ACC_IS_REGISTERED) {
+Чтобы подключенный клиент мог зайти в браузер, а сервер обработал этот запрос, необходимо организовать маршрутизацию трафика через VPN-сервер. Это включает настройку IPsec для туннелирования трафика, а также настройку сервера для обработки HTTP-запросов (например, через прокси или NAT). Давайте разберем, как это можно сделать.
 
-		if (view->contactConInfoLabel->Text != "") {
-			model->makeCallNs(view->contactConInfoLabel->Text->ToString());
-		}
-		else
-			System::Windows::Forms::MessageBox::Show("�� �� ������� ���� ���������� ����");
-		if (view->chatRichTextBox->Text != "") {
-			//view->chatRichTextBox->SelectedText = view->chatRichTextBox->Text + System::Environment::NewLine + "���������� ���������...";
-		}
-	}
-	else if (view->_accRegFlag == ACC_NOT_REGISTERED)
-		System::Windows::Forms::MessageBox::Show("��� ������ ������� � �������");
-}
-void VoIPhone::SIPPresenter::updateChatMsgTextBox(System::String^ url, System::String^ msg)
-{
-	incMsg = gcnew array<Object^> { url, msg };
-	view->chatRichTextBox->Invoke(gcnew MethodInvoker(this, &SIPPresenter::UpdateChatHelper), incMsg);
-}
-void VoIPhone::SIPPresenter::UpdateChatHelper()
-{
-	array<Object^>^ args = dynamic_cast<array<Object^>^>(view->chatRichTextBox->Invoke(gcnew Func<array<Object^>^>(this, &SIPPresenter::GetArgs)));
-	updateChat(args);
-}
-array<System::Object^>^ VoIPhone::SIPPresenter::GetArgs()
-{
-	return incMsg;
-}
-void VoIPhone::SIPPresenter::updateChat(array<Object^>^ args)
-{
-	System::String^ url = safe_cast<System::String^>(args[0]);
-	System::String^ msg = safe_cast<System::String^>(args[1]);
+---
 
-	if (view->chatRichTextBox->Text == "") {
-		view->chatRichTextBox->SelectedText = url + "-> " + msg;
-	}
-	else {
-		view->chatRichTextBox->SelectedText = System::Environment::NewLine;
-		view->chatRichTextBox->SelectedText = url + "-> " + msg;
-	}
-}
-void VoIPhone::SIPPresenter::answerCall(System::String^ url)
-{
-	incCall = gcnew array<Object^> {url};
-	view->Invoke(gcnew MethodInvoker(this, &SIPPresenter::updateCall));
-}
-void VoIPhone::SIPPresenter::updateCall()
-{
-	System::String^ url = safe_cast<System::String^>(incCall[0]);
-	int index = url->IndexOf('<');
-	System::String^ resultUrl;
-	System::String^ name;
-	System::String^ address;
-	if (index != -1)
-	{
-		if (index != 0)
-			name = url->Substring(1, index - 3)->Trim();
-		address = url->Substring(index + 1, url->Length - index - 2)->Trim();
-		resultUrl = name + "\r\n" + address;
-	}
-	if (view->_inActiveCall == ACC_CALL_NO_ACTIVE) {
-		view->_inActiveCall = ACC_CALL_ACTIVE;
-		//view->contactConInfoLabel->Text = resultUrl;
-		//view->contactsListBox->Items->Add(name + "-" + address);
-		//view->chatRichTextBox->Clear();
-		//view->chatRichTextBox->Text = "���������� ������������... " + address;
-		//view->makeCallButton->Text = "���������";
-	}
-	else if (view->_inActiveCall == ACC_CALL_ACTIVE) {
-		model->hangupCalls();
-		view->_inActiveCall = ACC_CALL_ACTIVE;
-		//view->contactConInfoLabel->Text = resultUrl;
-		//view->contactsListBox->Items->Add(name + "-" + address);
-		//view->chatRichTextBox->Clear();
-		//view->makeCallButton->Text = "���������";
-	}
+### 1. **Настройка IPsec для туннелирования трафика**
+IPsec создает защищенный туннель между клиентом и сервером. Весь трафик клиента будет направляться через этот туннель. Для этого:
+
+- Настройте IPsec на сервере и клиенте (например, с использованием StrongSwan или OpenSwan).
+- Убедитесь, что клиентский трафик маршрутизируется через VPN-туннель. Это можно сделать, настроив маршруты на клиенте и сервере.
+
+Пример настройки маршрута на сервере:
+```bash
+ip route add 10.0.0.0/24 dev ipsec0
+```
+Здесь `10.0.0.0/24` — это подсеть клиентов, а `ipsec0` — интерфейс IPsec.
+
+---
+
+### 2. **Настройка NAT на сервере**
+Чтобы клиент мог выходить в интернет через VPN-сервер, необходимо настроить NAT (Network Address Translation) на сервере. Это позволит клиенту использовать IP-адрес сервера для выхода в интернет.
+
+Пример настройки NAT с использованием `iptables`:
+```bash
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+```
+Здесь `eth0` — это интерфейс сервера, подключенный к интернету.
+
+---
+
+### 3. **Обработка HTTP-запросов на сервере**
+Если вы хотите, чтобы сервер обрабатывал HTTP-запросы (например, для анализа или перенаправления), можно настроить HTTP-прокси на сервере. Например, можно использовать библиотеку Boost.Beast для создания простого HTTP-прокси.
+
+Пример простого HTTP-прокси на Boost.Beast:
+
+```cpp
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/beast/version.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <iostream>
+#include <string>
+
+namespace beast = boost::beast;
+namespace http = beast::http;
+namespace net = boost::asio;
+using tcp = boost::asio::ip::tcp;
+
+void handle_request(http::request<http::string_body>& req, http::response<http::string_body>& res) {
+    // Пример обработки запроса
+    res.version(req.version());
+    res.result(http::status::ok);
+    res.set(http::field::server, "Boost VPN Proxy");
+    res.body() = "Hello from VPN server!";
+    res.prepare_payload();
 }
 
+void handle_client(tcp::socket& socket) {
+    try {
+        beast::flat_buffer buffer;
+        http::request<http::string_body> req;
+        http::read(socket, buffer, req);
+
+        http::response<http::string_body> res;
+        handle_request(req, res);
+
+        http::write(socket, res);
+    } catch (std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+    }
+}
+
+int main() {
+    try {
+        net::io_context io_context;
+
+        // Создаем TCP-сервер на порту 8080
+        tcp::acceptor acceptor(io_context, tcp::endpoint(tcp::v4(), 8080));
+        std::cout << "HTTP proxy started on port 8080" << std::endl;
+
+        while (true) {
+            tcp::socket socket(io_context);
+            acceptor.accept(socket);
+
+            // Обрабатываем клиента в отдельном потоке
+            std::thread(handle_client, std::move(socket)).detach();
+        }
+    } catch (std::exception& e) {
+        std::cerr << "Exception: " << e.what() << std::endl;
+    }
+
+    return 0;
+}
+```
+
+---
+
+### 4. **Настройка клиента**
+Клиент должен быть настроен для использования VPN-сервера в качестве шлюза по умолчанию. Это можно сделать вручную или с помощью VPN-клиента.
+
+Пример настройки маршрута на клиенте:
+```bash
+ip route add default dev ipsec0
+```
+
+---
+
+### 5. **Как это работает**
+1. Клиент подключается к VPN-серверу через IPsec.
+2. Весь трафик клиента (включая HTTP-запросы) направляется через VPN-туннель.
+3. Сервер принимает трафик, применяет NAT и перенаправляет его в интернет.
+4. Если на сервере настроен HTTP-прокси, он может анализировать или модифицировать HTTP-запросы перед их отправкой в интернет.
+
+---
+
+### 6. **Пример использования**
+1. Клиент открывает браузер и вводит URL (например, `http://example.com`).
+2. Запрос направляется через VPN-туннель на сервер.
+3. Сервер принимает запрос, обрабатывает его (например, через HTTP-прокси) и перенаправляет в интернет.
+4. Ответ от интернета возвращается через VPN-туннель клиенту.
+
+---
+
+### 7. **Дополнительные улучшения**
+- **Шифрование трафика:** IPsec уже обеспечивает шифрование, но можно добавить дополнительные слои безопасности (например, TLS).
+- **Аутентификация:** Используйте PSK (Pre-Shared Key) или сертификаты для аутентификации клиентов.
+- **Логирование и мониторинг:** Добавьте логирование запросов и ответов для анализа трафика.
+
+---
+
+Этот подход позволяет клиенту использовать браузер через VPN-сервер, а серверу — обрабатывать и перенаправлять трафик.
