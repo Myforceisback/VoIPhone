@@ -1,357 +1,167 @@
-#include "SIPModel.h"
-#include "pjsip/sip_msg.h"
-#include "SIPPresenter.h"
-#include <fstream>
+Для создания IP-шифратора на C++ с использованием IPsec ESP и алгоритма "Магма" (ГОСТ 28147-89) выполните следующие шаги:
+
+---
+
+### 1. Настройка окружения
+- Установите необходимые библиотеки:
+  ```bash
+  sudo apt install build-essential libpcap-dev
+  ```
+
+---
+
+### 2. Реализация захвата и отправки пакетов (RAW-сокеты)
+```cpp
 #include <iostream>
-#include <sstream>
-bool VoIPhone::SIPModel::initPJ()
-{
-    pj::EpConfig ep_cfg;
-    pj::TransportConfig tcfg;
-    tcfg.port = 5060;
-    try {
-        core.libCreate();
-        core.libInit(ep_cfg);
-        core.transportCreate(PJSIP_TRANSPORT_UDP, tcfg);
-        core.libStart();
-		core.libRegisterThread("modelThread");
+#include <pcap.h>
+#include <netinet/ip.h>
+#include <netinet/ether.h>
+
+// Callback-функция для обработки пакетов
+void packet_handler(u_char *user, const struct pcap_pkthdr *hdr, const u_char *data) {
+    struct iphdr *ip_header = (struct iphdr*)(data + sizeof(struct ethhdr));
+    // Здесь будет обработка IP-пакета
+}
+
+int main() {
+    char errbuf[PCAP_ERRBUF_SIZE];
+    pcap_t *handle = pcap_open_live("eth0", BUFSIZ, 1, 1000, errbuf);
+    
+    if (handle == nullptr) {
+        std::cerr << "Error opening interface: " << errbuf << std::endl;
+        return 1;
     }
-    catch (pj::Error& err) {
-		System::Console::WriteLine("������������� ���������� ����������� � ������� \r\n Error #" + gcnew System::String(err.info().data()));
-        return false;
+    
+    pcap_loop(handle, 0, packet_handler, nullptr);
+    pcap_close(handle);
+    return 0;
+}
+```
+
+---
+
+### 3. Реализация алгоритма "Магма" (ГОСТ 28147-89)
+```cpp
+#include <cstdint>
+#include <vector>
+
+class MagmaCipher {
+    uint32_t key[8]; // 256-битный ключ
+
+    // S-блоки ГОСТ
+    const uint8_t sbox[8][16] = { /* ... */ };
+
+    uint32_t f(uint32_t block, uint32_t key) {
+        // Реализация функции раунда
+        return block;
     }
-	std::ifstream ifs("D:\\PSU\\DIPLOM\\Debug\\KEY.txt");
-	//std::ifstream ifs("C:\\Users\\sdxop\\Desktop\\share\\DIPLOM\\Debug\\KEY.txt");
-	if (!ifs)
-		std::cerr << "mda";
-	ifs >> key;
-	if (key != "")
-		cryptFlag = 1;
-	ifs.close();
-    return true;
-}
-bool VoIPhone::SIPModel::destroyPJ()
-{
-	try {
-		core.hangupAllCalls();
-		if (acc != nullptr) {
-			acc->shutdown();
-			delete acc;
-			
-		}
-		if (this->exitAccount()) {
-			core.libStopWorkerThreads();
-			core.libDestroy();
-		}
-	}
-	catch (pj::Error& err) {
-		System::Console::WriteLine("��������������� ���������� ����������� � ������� \r\n Error #" + gcnew System::String(err.info().data()));
-		return false;
-	}
-	return true;
-} 
-bool VoIPhone::SIPModel::loginAccount(System::Collections::ArrayList^ destination, SIPPresenter^ pres)
-{
-	//acc = new SIPaccount();
-	acc = new SIPaccount(pres);
-	System::Collections::Generic::List<System::String^>^ userData = gcnew System::Collections::Generic::List<System::String^>();
-	for each (auto item in destination)
-	{
-		userData->Add(dynamic_cast<System::String^>(item));
-	}
-	
-	uData userDataNString;
-	userDataNString.sipServ		= (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(userData[0])).ToPointer();
-	userDataNString.sipProxy	= (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(userData[1])).ToPointer();
-	userDataNString.sipDomain	= (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(userData[2])).ToPointer();
-	userDataNString.sipUsername = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(userData[3])).ToPointer();
-	userDataNString.sipPassword = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(userData[4])).ToPointer();
-	
-	pj::AccountConfig acc_cfg;
-	acc_cfg.idUri					  = "sip:" + userDataNString.sipUsername + "@" + userDataNString.sipServ;
-	acc_cfg.regConfig.registrarUri    = "sip:" + userDataNString.sipServ;
-	acc_cfg.sipConfig.proxies.push_back("sip:" + userDataNString.sipProxy);
-	acc_cfg.sipConfig.authCreds.push_back(pj::AuthCredInfo("Digets", "*", userDataNString.sipUsername, PJSIP_CRED_DATA_PLAIN_PASSWD, userDataNString.sipPassword));
-	try {
-		acc->create(acc_cfg, true);
-		this->buddyCreate();
-	}
-	catch (pj::Error& err) {
-		System::Console::WriteLine("����������� �������� ����������� � �������(Create) \r\n Error #" + gcnew System::String(err.info().data()));
-		return false;
-	}
-	if (!acc->isValid()) {
-		System::Console::WriteLine("Error in valid account");
-		return false;
-	}
-	else {
-		try {
-			pj::PresenceStatus ps;
-			ps.status = PJSUA_BUDDY_STATUS_ONLINE;
-			// Optional, set the activity and some note
-			ps.activity = PJRPID_ACTIVITY_BUSY;
-			ps.note = "On the phone";
-			acc->setOnlineStatus(ps);
-		}
-		catch (pj::Error& err) {
-			System::Console::WriteLine("������������� ���������� ����������� � �������(PresenceStatus) \r\n Error #" + gcnew System::String(err.info().data()));
-			return false;
-		}
-	}
-	return true;
-}
-bool VoIPhone::SIPModel::buddyCreate()
-{
-	buddy = new MyBuddy;
-	pj::BuddyConfig bdd_cfg;
-	pj::AccountInfo acc_inf;
-	acc_inf = acc->getInfo();
-	bdd_cfg.uri = acc_inf.uri;
-	try {
-		buddy->create(*acc, bdd_cfg);
-		buddy->subscribePresence(true);
-	}
-	catch (pj::Error& err) {
-		System::Windows::Forms::MessageBox::Show("������������� ���������� ����������� � �������(byddyCreate) \r\n Error #" + gcnew System::String(err.info().data()));
-		return false;
-	}
-	return true;
-}
-bool VoIPhone::SIPModel::exitAccount()
-{
-	try {
-		if (acc != NULL) {
-			acc->shutdown();
-		}
-	}
-	catch (pj::Error& err) {
-		System::Windows::Forms::MessageBox::Show("����� �� �������� ���������� � ������� \r\n Error #" + gcnew System::String(err.info().data()));
-		return false;
-	}
-	return true;
-}
-void VoIPhone::SIPModel::makeCallSs(System::String^ destination)
-{
-	int startIndex = destination->IndexOf("\r\n");
-	String^ resultString = destination->Substring(startIndex + 2);
-	const char* chAddress = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(resultString)).ToPointer();
-	std::string userName = chAddress;
-	System::Runtime::InteropServices::Marshal::FreeHGlobal(IntPtr((void*)chAddress));
-	
-	if (key == "key-magmakey-enc") {
-		MyCall* myCall = new MyCall(*acc);
-		pj::Call* call = myCall;
-		acc->calls.push_back(call);
-		pj::CallOpParam prm(true);
-		prm.opt.audioCount = 1;
-		prm.opt.videoCount = 0;
-		myCall->encr = 1;
-		std::thread callTh([this, userName, call, prm] {
-			CallThread(userName, call, prm);
-			});
-		callTh.detach();
-	}
-	else {
-		pj::Call* call = new MyCall(*acc);
-		acc->calls.push_back(call);
-		pj::CallOpParam prm(true);
-		prm.opt.audioCount = 1;
-		prm.opt.videoCount = 0;
 
-		std::thread callTh([this, userName, call, prm] {
-			CallThread(userName, call, prm);
-			});
-		callTh.detach();
-	}
-}
-void VoIPhone::SIPModel::makeCallNs(System::String^ destination)
-{
-	if (this->copyFlag == 1) {
-		std::string fileName = "asdf.txt";
-		std::ofstream fs("D:\\PSU\\DIPLOM\\Debug\\" + fileName);
-		//std::ofstream fs("C:\\Users\\sdxop\\Desktop\\share\\DIPLOM\\Debug\\" + fileName);
-		if (!fs) {
-			std::cout << "mda";
-		}
-		if (this->cryptFlag = 1) {
-			fs << "������, � ���������� ����!\n��������� ����!";
-			//fs << "��`��o��K�Zj�y�W�_�b{ ���e� - ";
-		}
-		else
-			fs << "������, � ���������� ����!";
-		fs.close();
-		this->copyFlag = 0;
-	}
-	else{
-		int startIndex = destination->IndexOf("\r\n");
-		String^ resultString = destination->Substring(startIndex + 2);
-		const char* chAddress = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(resultString)).ToPointer();
-		std::string userName = chAddress;
-		System::Runtime::InteropServices::Marshal::FreeHGlobal(IntPtr((void*)chAddress));
+public:
+    MagmaCipher(const uint8_t* key_data) {
+        // Инициализация ключа
+    }
 
-		std::string fileName = "asdf.txt";
-		std::ofstream fs("D:\\PSU\\DIPLOM\\Debug\\" + fileName);
-		//std::ofstream fs("C:\\Users\\sdxop\\Desktop\\share\\DIPLOM\\Debug\\" + fileName);
-		if (!fs) {
-			std::cout << "mda";
-		}
-		fs << "������, � ���������� ����!";
-		fs.close();
+    void encrypt(uint8_t* data, size_t len) {
+        // Шифрование данных
+    }
 
-		std::string file;
-		System::Windows::Forms::OpenFileDialog^ openDlg = gcnew System::Windows::Forms::OpenFileDialog();
-		openDlg->Title = "����� ����� ��� ��������";
-		openDlg->Filter = "Text Files(*.TXT;*.DOC;*.DOCX)|*.TXT;*.DOC;*.DOCX|All files (*.*)|*.*";
-		if (System::Windows::Forms::DialogResult::OK == openDlg->ShowDialog())
-		{
-			System::String^ fileName = openDlg->FileName;
-			int startIndex = fileName->IndexOf("\r\n");
-			System::String^ resultString = fileName->Substring(startIndex + 2);
-			const char* chAddress = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(resultString)).ToPointer();
-			file = chAddress;
-			System::Runtime::InteropServices::Marshal::FreeHGlobal(System::IntPtr((void*)chAddress));
-		}
+    void decrypt(uint8_t* data, size_t len) {
+        // Дешифрование
+    }
+};
+```
 
-		if (this->cryptFlag == 1) {
-			this->copyFlag = 1;
-			acc->cryptFlag = 1;
-			int         startIndex = destination->IndexOf("\r\n");
-			String^ resultString = destination->Substring(startIndex + 2);
-			const char* chAddress = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(resultString)).ToPointer();
-			std::string msg = "��`��o��K�Zj�y�W�_�b{ ���e� -";
-			std::string userName = chAddress;
-			pj::BuddyConfig cfg;
-			cfg.uri = userName;
-			pj::Buddy* buddy = new pj::Buddy();
-			buddy->create(*acc, cfg);
-			pj::SendInstantMessageParam simp;
-			simp.content = msg;
-			System::Runtime::InteropServices::Marshal::FreeHGlobal(IntPtr((void*)chAddress));
-			try {
-				buddy->sendInstantMessage(simp);
-			}
-			catch (pj::Error& err) {
-				std::cout << err.info() << std::endl;
-			}
-			delete buddy;
-		}
-		else {
-			this->copyFlag = 1;
-			int         startIndex = destination->IndexOf("\r\n");
-			String^ resultString = destination->Substring(startIndex + 2);
-			const char* chAddress = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(resultString)).ToPointer();
-			std::string msg = "���� - " + fileName;
-			std::string userName = chAddress;
-			pj::BuddyConfig cfg;
-			cfg.uri = userName;
-			pj::Buddy* buddy = new pj::Buddy();
-			buddy->create(*acc, cfg);
-			pj::SendInstantMessageParam simp;
-			simp.content = msg;
-			System::Runtime::InteropServices::Marshal::FreeHGlobal(IntPtr((void*)chAddress));
-			try {
-				buddy->sendInstantMessage(simp);
-			}
-			catch (pj::Error& err) {
-				std::cout << err.info() << std::endl;
-			}
-			delete buddy;
-		}
-	}
-}
-void VoIPhone::SIPModel::CallThread(std::string callAddress, pj::Call* call, pj::CallOpParam prm)
-{
-	pj_thread_desc desc;
-	pj_thread_t* thread = 0;
-	pj_thread_register("callIs", desc, &thread);
-	
-	try {
-		call->makeCall(callAddress, prm);
-	}
-	catch (pj::Error& err) {
-		std::cout << "Error with call " + err.info() << std::endl;
-		acc->calls.pop_back();
-		return;
-	}
-	_callActive = true;
-}
-void VoIPhone::SIPModel::hangupCalls()
-{
-	try {
-		for (size_t i = 0; i < acc->calls.size(); ++i)
-			acc->calls.pop_back();
-	}
-	catch(...){}
-	core.hangupAllCalls();
-	_callActive = false;
-}
-void VoIPhone::SIPModel::sendMessage(System::String^ msg, System::String^ fromUri) const
-{
-	if (this->cryptFlag == 1) {
-		int         startIndex = fromUri->IndexOf("\r\n");
-		String^ resultString = fromUri->Substring(startIndex + 2);
-		const char* chAddress = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(resultString)).ToPointer();
-		//const char* chAddress     = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(fromUri)).ToPointer();
-		const char* chMsg = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(msg)).ToPointer();
-		std::string userName = chAddress;
-		pj::BuddyConfig cfg;
-		cfg.uri = userName;
-		pj::Buddy* buddy = new pj::Buddy();
-		acc->cryptFlag = 1;
-		buddy->create(*acc, cfg);
-		pj::SendInstantMessageParam simp;
-		std::string strMsg = chMsg;
-		std::string strMsgE = "";
-		Magma magma(key.c_str(), "mouse");
-		std::istringstream strStream(strMsg);
-		std::ostringstream strStreamE(strMsgE);
-		magma.encrypt(Magma::Method::CFB, strStream, strStreamE);
-		simp.content = strStreamE.str();
-		System::Runtime::InteropServices::Marshal::FreeHGlobal(IntPtr((void*)chAddress));
-		System::Runtime::InteropServices::Marshal::FreeHGlobal(IntPtr((void*)chMsg));
-		try {
-			buddy->sendInstantMessage(simp);
-		}
-		catch (pj::Error& err) {
-			std::cout << err.info() << std::endl;
-		}
-		delete buddy;
-	}
-	else {
-		int         startIndex = fromUri->IndexOf("\r\n");
-		String^ resultString = fromUri->Substring(startIndex + 2);
-		const char* chAddress = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(resultString)).ToPointer();
-		//const char* chAddress     = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(fromUri)).ToPointer();
-		const char* chMsg = (const char*)(System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(msg)).ToPointer();
-		std::string userName = chAddress;
-		pj::BuddyConfig cfg;
-		cfg.uri = userName;
-		pj::Buddy* buddy = new pj::Buddy();
-		buddy->create(*acc, cfg);
-		pj::SendInstantMessageParam simp;
-		simp.content = chMsg;
-		System::Runtime::InteropServices::Marshal::FreeHGlobal(IntPtr((void*)chAddress));
-		System::Runtime::InteropServices::Marshal::FreeHGlobal(IntPtr((void*)chMsg));
-		try {
-			buddy->sendInstantMessage(simp);
+---
 
-		}
-		catch (pj::Error& err) {
-			std::cout << err.info() << std::endl;
-		}
-		delete buddy;
-	}
+### 4. Реализация IPsec ESP
+#### Структура ESP-заголовка:
+```cpp
+struct esp_header {
+    uint32_t spi;   // Security Parameters Index
+    uint32_t seq;   // Sequence Number
+    uint8_t iv[8];  // Initialization Vector
+    // Далее следует зашифрованная нагрузка
+};
+```
+
+#### Шифрование пакета:
+```cpp
+void encrypt_packet(uint8_t* packet, size_t len, MagmaCipher& cipher) {
+    // Добавление ESP-заголовка
+    struct esp_header esp;
+    esp.spi = htonl(0x12345678);
+    esp.seq = htonl(1);
+    
+    // Генерация IV
+    // ...
+    
+    // Шифрование данных
+    cipher.encrypt(packet + sizeof(esp_header), len - sizeof(esp_header));
 }
-System::String^ VoIPhone::SIPModel::addContact()
-{
-	AddContactForm^ addContact = gcnew AddContactForm();
-	addContact->ShowDialog();
-	System::Collections::Generic::List<System::String^>^ contactInfo = addContact->getInfo();
-	if (contactInfo != nullptr) {
-		//_friendsManager->addFriend(contactInfo[0], contactInfo[1]);
-		System::String^ req = contactInfo[0] + "-" + contactInfo[1];
-		//System::Windows::Forms::MessageBox::Show("������ ������������ �� ����������");
-		return req;
-	}
-	return nullptr;
+```
+
+---
+
+### 5. Туннелирование через RAW-сокеты
+```cpp
+#include <sys/socket.h>
+#include <netinet/ip.h>
+
+int create_raw_socket() {
+    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+    int one = 1;
+    setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one));
+    return sock;
 }
+
+void send_encrypted_packet(int sock, struct sockaddr_in* dest, uint8_t* data, size_t len) {
+    sendto(sock, data, len, 0, (struct sockaddr*)dest, sizeof(*dest));
+}
+```
+
+---
+
+### 6. Сборка проекта
+Компиляция:
+```bash
+g++ -o ipsec_encryptor main.cpp -lpcap
+```
+
+---
+
+### 7. Настройка сети
+- Включите форвардинг пакетов:
+  ```bash
+  sudo sysctl -w net.ipv4.ip_forward=1
+  ```
+- Настройте iptables для перенаправления трафика:
+  ```bash
+  sudo iptables -A INPUT -i eth0 -j NFQUEUE --queue-num 0
+  ```
+
+---
+
+### Важные замечания:
+1. **Ключевое управление**: Используйте предустановленные ключи для упрощения.
+2. **Производительность**: Для обработки больших объемов данных используйте многопоточность.
+3. **Безопасность**: 
+   - Всегда проверяйте целостность пакетов (HMAC).
+   - Используйте защищенные каналы для обмена ключами.
+4. **Тестирование**: Проверяйте в изолированной сети перед развертыванием.
+
+---
+
+### Пример конфигурации туннеля:
+```
+Локальный шифратор:
+IP: 192.168.1.100
+Удаленный шифратор:
+IP: 192.168.1.200
+SPI: 0x12345678
+Ключ: 00112233...FF (32 байта)
+```
+
+Это базовая реализация. Для промышленного использования потребуется:
+- Поддержка IKEv2 для обмена ключами
+- Обработка фрагментации пакетов
+- Механизмы защиты от повторов (anti-replay)
