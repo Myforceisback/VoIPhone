@@ -1,224 +1,170 @@
-#pragma once
-#include "SIPModel.h"
-#include <regex>
-#include <sstream>
-#include "SIPaccount.h"
+Использование raw socket для отправки пакетов IKEv2 требует работы на низком уровне сетевого стека. Это подразумевает ручное создание IP-заголовка и UDP-заголовка (если используется UDP-инкапсуляция, что часто применяется для IKEv2). В этом примере я покажу, как отправить IKEv2 пакет через raw socket на Linux.
 
+### Пример: Отправка IKEv2 пакета через raw socket
 
-namespace VoIPhone {
+```cpp
+#include <iostream>
+#include <cstring>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/ip.h>
+#include <netinet/udp.h>
 
-	using namespace System;
-	using namespace System::ComponentModel;
-	using namespace System::Collections;
-	using namespace System::Windows::Forms;
-	using namespace System::Data;
-	using namespace System::Drawing;
-
-	enum StatusAcc {
-		ACC_IS_REGISTERED,
-		ACC_NOT_REGISTERED,
-		ACC_CALL_ACTIVE,
-		ACC_CALL_NO_ACTIVE,
-		ACC_NO_FIRST_ANSWER,
-		ACC_FIRST_ANSWER
-	};
-	/// <summary>
-	/// ������ ��� DialogForm
-	/// </summary>
-	public ref class DialogForm : public System::Windows::Forms::Form
-	{
-	public:
-		DialogForm(void)
-		{
-			InitializeComponent();
-			//
-			//TODO: �������� ��� ������������
-			//
-		}
-		//���������� ��� �������� ������
-		DialogForm(SIPaccount& acc, pj::CallInfo* ci, pj::Call* call, pj::CallOpParam* prm)
-		{
-			this->acc = &acc;
-			model = new SIPModel(this->acc);
-			this->ci = ci;
-			this->call = call;
-			this->prm = prm;
-			_isActiveCall = ACC_CALL_ACTIVE;
-			_answrCall = ACC_FIRST_ANSWER;
-			InitializeComponent();
-			model->buddyCreate();
-			this->contactInfoLabel->Text = gcnew String(ci->remoteUri.c_str());
-			this->callButton->Text = L"��������";
-		}
-
-	protected:
-		/// <summary>
-		/// ���������� ��� ������������ �������.
-		/// </summary>
-		~DialogForm()
-		{
-			if (components)
-			{
-				delete components;
-			}
-			try {
-				delete model;
-				//delete call;
-				//delete ci;
-				//delete prm;
-				//call->hangup(&this->prm);
-			}
-			catch (...) {}
-		}
-	private: System::Windows::Forms::Label^ contactInfoLabel;
-	private: System::Windows::Forms::TextBox^ textSenderTextBox;
-	private: System::Windows::Forms::Button^ callButton;
-	public: System::Windows::Forms::RichTextBox^ chatRichTextBox;
-
-
-
-	protected:
-
-	private:
-		/// <summary>
-		/// ������������ ���������� ������������.
-		/// </summary>
-		System::ComponentModel::Container ^components;
-	private:
-		SIPaccount* acc;
-		pj::CallInfo* ci;
-		pj::Call* call;
-		pj::CallOpParam* prm;
-		VoIPhone::callData* callD;
-		SIPModel* model;
-		int _isActiveCall;
-		int _answrCall;
-
-#pragma region Windows Form Designer generated code
-		/// <summary>
-		/// ��������� ����� ��� ��������� ������������ � �� ��������� 
-		/// ���������� ����� ������ � ������� ��������� ����.
-		/// </summary>
-		void InitializeComponent(void)
-		{
-			this->contactInfoLabel = (gcnew System::Windows::Forms::Label());
-			this->textSenderTextBox = (gcnew System::Windows::Forms::TextBox());
-			this->callButton = (gcnew System::Windows::Forms::Button());
-			this->chatRichTextBox = (gcnew System::Windows::Forms::RichTextBox());
-			this->SuspendLayout();
-			// 
-			// contactInfoLabel
-			// 
-			this->contactInfoLabel->BackColor = System::Drawing::SystemColors::AppWorkspace;
-			this->contactInfoLabel->Font = (gcnew System::Drawing::Font(L"Arial", 15.75F, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
-				static_cast<System::Byte>(204)));
-			this->contactInfoLabel->Location = System::Drawing::Point(12, 9);
-			this->contactInfoLabel->Name = L"contactInfoLabel";
-			this->contactInfoLabel->Size = System::Drawing::Size(271, 50);
-			this->contactInfoLabel->TabIndex = 0;
-			this->contactInfoLabel->Text = L"MASHA\r\nSIP:masha@sip2sip.ru";
-			// 
-			// textSenderTextBox
-			// 
-			this->textSenderTextBox->BackColor = System::Drawing::SystemColors::ScrollBar;
-			this->textSenderTextBox->Location = System::Drawing::Point(12, 355);
-			this->textSenderTextBox->MaximumSize = System::Drawing::Size(531, 55);
-			this->textSenderTextBox->MinimumSize = System::Drawing::Size(531, 55);
-			this->textSenderTextBox->Name = L"textSenderTextBox";
-			this->textSenderTextBox->Size = System::Drawing::Size(531, 55);
-			this->textSenderTextBox->TabIndex = 1;
-			this->textSenderTextBox->KeyPress += gcnew System::Windows::Forms::KeyPressEventHandler(this, &DialogForm::textSenderTextBox_KeyPress);
-			// 
-			// callButton
-			// 
-			this->callButton->Location = System::Drawing::Point(466, 9);
-			this->callButton->Name = L"callButton";
-			this->callButton->Size = System::Drawing::Size(77, 50);
-			this->callButton->TabIndex = 2;
-			this->callButton->Text = L"���������";
-			this->callButton->UseVisualStyleBackColor = true;
-			this->callButton->Click += gcnew System::EventHandler(this, &DialogForm::callButton_Click);
-			// 
-			// chatRichTextBox
-			// 
-			this->chatRichTextBox->Location = System::Drawing::Point(12, 65);
-			this->chatRichTextBox->Name = L"chatRichTextBox";
-			this->chatRichTextBox->ReadOnly = true;
-			this->chatRichTextBox->Size = System::Drawing::Size(531, 284);
-			this->chatRichTextBox->TabIndex = 3;
-			this->chatRichTextBox->Text = L"";
-			// 
-			// DialogForm
-			// 
-			this->AutoScaleDimensions = System::Drawing::SizeF(6, 13);
-			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
-			this->BackColor = System::Drawing::SystemColors::WindowFrame;
-			this->ClientSize = System::Drawing::Size(555, 420);
-			this->Controls->Add(this->chatRichTextBox);
-			this->Controls->Add(this->callButton);
-			this->Controls->Add(this->textSenderTextBox);
-			this->Controls->Add(this->contactInfoLabel);
-			this->Name = L"DialogForm";
-			this->Text = L"���";
-			this->ResumeLayout(false);
-			this->PerformLayout();
-
-		}
-#pragma endregion
-
-public:
-	void UpdateRichTextBox(std::string msg)
-	{
-		System::Windows::Forms::MessageBox::Show(gcnew System::String(msg.c_str()));
-	}
-
-private: System::Void callButton_Click(System::Object^ sender, System::EventArgs^ e) {
-		/*if (_isActiveCall == ACC_CALL_ACTIVE) {
-			if (_answrCall == ACC_FIRST_ANSWER) {
-				acc->calls.pop_back();
-				call->hangup(&this->prm);
-			}
-			else if (_answrCall == ACC_NO_FIRST_ANSWER) {
-				call->hangup(&this->prm);
-			}
-			this->callButton->Text = L"�����";
-			_isActiveCall = ACC_CALL_NO_ACTIVE;
-		}
-		else if (_isActiveCall == ACC_CALL_NO_ACTIVE) {
-			this->callButton->Text = L"��������";
-			_isActiveCall = ACC_CALL_ACTIVE;
-			callD = (VoIPhone::callData*)&model->makeCallNs(this->ci->remoteUri);
-			call = callD->call;
-			prm = callD->prm;
-		}*/
-	}
-private: System::Void textSenderTextBox_KeyPress(System::Object^ sender, System::Windows::Forms::KeyPressEventArgs^ e) {
-	using namespace System;
-	using namespace System::Text::RegularExpressions;
-	if (e->KeyChar == (char)Keys::Enter) {
-
-		std::regex pattern("<([^>]*)>");
-		std::smatch match;
-		std::string extractedString;
-		if (std::regex_search(this->ci->remoteUri, match, pattern)) {
-			extractedString = match[1];
-		}
-		else {
-			std::cout << "�� ������� ������� ������" << std::endl;
-		}
-
-		model->sendMessage(this->textSenderTextBox->Text->ToString(), gcnew String(extractedString.c_str()));
-		if (this->chatRichTextBox->Text == "") {
-			this->chatRichTextBox->SelectedText = L"ME -> " + this->textSenderTextBox->Text->ToString();
-			this->textSenderTextBox->Clear();
-		}
-		else {
-			this->chatRichTextBox->SelectedText = System::Environment::NewLine;
-			this->chatRichTextBox->SelectedText = L"ME -> " + this->textSenderTextBox->Text->ToString();
-			this->textSenderTextBox->Clear();
-		}
-		
-	}
-}
+// Структура для IKEv2 заголовка
+struct IKEv2Header {
+    uint8_t initiatorSPI[8];
+    uint8_t responderSPI[8];
+    uint8_t nextPayload;
+    uint8_t version;
+    uint8_t exchangeType;
+    uint8_t flags;
+    uint32_t messageID;
+    uint32_t length;
 };
+
+// Функция для вычисления контрольной суммы (упрощённая версия)
+uint16_t checksum(const void* data, size_t length) {
+    const uint16_t* ptr = reinterpret_cast<const uint16_t*>(data);
+    uint32_t sum = 0;
+    for (size_t i = 0; i < length / 2; ++i) {
+        sum += ptr[i];
+    }
+    if (length % 2) {
+        sum += reinterpret_cast<const uint8_t*>(data)[length - 1];
+    }
+    while (sum >> 16) {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    return static_cast<uint16_t>(~sum);
 }
+
+// Функция для создания и отправки IKEv2 пакета
+void sendIKEv2Packet(const std::string& destIP, const std::string& srcIP, uint16_t destPort, uint16_t srcPort) {
+    // Создаём raw socket
+    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+    if (sock < 0) {
+        perror("Socket creation failed");
+        return;
+    }
+
+    // Включаем ручное заполнение IP-заголовка
+    int one = 1;
+    if (setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) {
+        perror("setsockopt failed");
+        close(sock);
+        return;
+    }
+
+    // Создаём буфер для пакета
+    char packet[4096];
+    memset(packet, 0, sizeof(packet));
+
+    // Указатели на заголовки
+    struct iphdr* ipHeader = reinterpret_cast<struct iphdr*>(packet);
+    struct udphdr* udpHeader = reinterpret_cast<struct udphdr*>(packet + sizeof(struct iphdr));
+    IKEv2Header* ikeHeader = reinterpret_cast<IKEv2Header*>(packet + sizeof(struct iphdr) + sizeof(struct udphdr));
+
+    // Заполняем IKEv2 заголовок
+    memset(ikeHeader->initiatorSPI, 0x11, sizeof(ikeHeader->initiatorSPI));
+    memset(ikeHeader->responderSPI, 0x22, sizeof(ikeHeader->responderSPI));
+    ikeHeader->nextPayload = 33; // Пример: SA payload
+    ikeHeader->version = 0x20;  // IKEv2
+    ikeHeader->exchangeType = 34; // Пример: IKE_SA_INIT
+    ikeHeader->flags = 0x08;     // Initiator bit set
+    ikeHeader->messageID = htonl(1);
+    ikeHeader->length = htonl(sizeof(IKEv2Header));
+
+    // Заполняем UDP заголовок
+    udpHeader->source = htons(srcPort);
+    udpHeader->dest = htons(destPort);
+    udpHeader->len = htons(sizeof(struct udphdr) + sizeof(IKEv2Header));
+    udpHeader->check = 0; // Контрольная сумма будет вычислена позже
+
+    // Заполняем IP заголовок
+    ipHeader->ihl = 5;
+    ipHeader->version = 4;
+    ipHeader->tos = 0;
+    ipHeader->tot_len = htons(sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(IKEv2Header));
+    ipHeader->id = htons(54321);
+    ipHeader->frag_off = 0;
+    ipHeader->ttl = 64;
+    ipHeader->protocol = IPPROTO_UDP;
+    ipHeader->check = 0; // Контрольная сумма будет вычислена позже
+    inet_pton(AF_INET, srcIP.c_str(), &ipHeader->saddr);
+    inet_pton(AF_INET, destIP.c_str(), &ipHeader->daddr);
+
+    // Вычисляем контрольную сумму IP заголовка
+    ipHeader->check = checksum(ipHeader, sizeof(struct iphdr));
+
+    // Вычисляем контрольную сумму UDP заголовка (псевдозаголовок)
+    struct {
+        uint32_t srcAddr;
+        uint32_t destAddr;
+        uint8_t zero;
+        uint8_t protocol;
+        uint16_t length;
+    } pseudoHeader;
+    pseudoHeader.srcAddr = ipHeader->saddr;
+    pseudoHeader.destAddr = ipHeader->daddr;
+    pseudoHeader.zero = 0;
+    pseudoHeader.protocol = IPPROTO_UDP;
+    pseudoHeader.length = udpHeader->len;
+
+    char pseudoPacket[sizeof(pseudoHeader) + sizeof(struct udphdr) + sizeof(IKEv2Header)];
+    memcpy(pseudoPacket, &pseudoHeader, sizeof(pseudoHeader));
+    memcpy(pseudoPacket + sizeof(pseudoHeader), udpHeader, sizeof(struct udphdr) + sizeof(IKEv2Header));
+    udpHeader->check = checksum(pseudoPacket, sizeof(pseudoPacket));
+
+    // Отправляем пакет
+    struct sockaddr_in destAddr;
+    memset(&destAddr, 0, sizeof(destAddr));
+    destAddr.sin_family = AF_INET;
+    inet_pton(AF_INET, destIP.c_str(), &destAddr.sin_addr);
+
+    if (sendto(sock, packet, ntohs(ipHeader->tot_len), 0, reinterpret_cast<struct sockaddr*>(&destAddr), sizeof(destAddr)) < 0) {
+        perror("Sendto failed");
+    } else {
+        std::cout << "IKEv2 packet sent successfully!" << std::endl;
+    }
+
+    close(sock);
+}
+
+int main() {
+    // Параметры для отправки
+    std::string destIP = "192.168.1.1"; // Адрес назначения
+    std::string srcIP = "192.168.1.2";  // Адрес источника
+    uint16_t destPort = 500;           // Порт назначения (стандартный для IKEv2)
+    uint16_t srcPort = 4500;           // Порт источника
+
+    // Отправляем IKEv2 пакет
+    sendIKEv2Packet(destIP, srcIP, destPort, srcPort);
+
+    return 0;
+}
+```
+
+### Пояснения:
+1. **Raw socket**: Создаётся сокет с использованием `SOCK_RAW`, что позволяет вручную заполнять заголовки IP и UDP.
+2. **IP заголовок**: Заполняется вручную, включая контрольную сумму.
+3. **UDP заголовок**: Заполняется вручную, включая контрольную сумму, которая требует использования псевдозаголовка.
+4. **IKEv2 заголовок**: Заполняется вручную, как в предыдущем примере.
+5. **Отправка пакета**: Используется `sendto` для отправки пакета на указанный адрес.
+
+### Важные моменты:
+- **Права администратора**: Для работы с raw socket требуются права root.
+- **Контрольные суммы**: Вычисляются вручную для IP и UDP заголовков.
+- **Псевдозаголовок UDP**: Используется для вычисления контрольной суммы UDP.
+
+### Запуск:
+1. Скомпилируйте программу:
+   ```bash
+   g++ -o ikev2_send ikev2_send.cpp -lssl -lcrypto
+   ```
+2. Запустите с правами root:
+   ```bash
+   sudo ./ikev2_send
+   ```
+
+Этот пример демонстрирует базовую отправку IKEv2 пакета через raw socket. Для полной реализации IKEv2 потребуется добавить поддержку всех типов payload, обработку ответов и другие функции.
