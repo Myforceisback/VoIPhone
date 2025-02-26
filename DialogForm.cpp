@@ -1,98 +1,117 @@
-Добавление заголовка ESP в IP-пакет вручную требует изменения заголовка IP перед отправкой через RAW-сокеты. Общий порядок действий:  
+Вот реализация сервера с использованием **Boost.Asio**, **Raw Socket** и **пула потоков** для обработки входящих пакетов:  
 
-1. **Создание IP-заголовка**  
-2. **Формирование заголовка ESP**  
-3. **Шифрование полезной нагрузки**  
-4. **Добавление ESP-заголовка в IP-пакет**  
-5. **Отправка через RAW-сокет**  
+### **Ключевые моменты реализации**  
+- **Raw Socket** (AF_PACKET на Linux) для приема всех входящих пакетов.  
+- **Boost.Asio** для асинхронной обработки и распределения работы.  
+- **Пул потоков** с использованием `std::thread` и `boost::asio::thread_pool`.  
 
----
-
-### **1. Формат IP-заголовка с ESP**
-ESP-заголовок вставляется между IP-заголовком и полезной нагрузкой.  
-
-**IPv4 до ESP:**  
-```
-[ IP Header ] [ ESP Header ] [ Encrypted Payload ] [ ESP Trailer ] [ ESP Auth ]
-```
-**IPv6:**  
-ESP является отдельным заголовком (Next Header указывает на ESP).  
-
----
-
-### **2. Код на C++ для формирования IP + ESP**
+### **Код сервера**
 ```cpp
 #include <iostream>
 #include <vector>
-#include <cstring>
-#include <arpa/inet.h>
+#include <thread>
+#include <boost/asio.hpp>
+#include <linux/if_packet.h>
+#include <netinet/ether.h>
+#include <netinet/ip.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <linux/ip.h>
-#include <linux/udp.h>
-#include <linux/if_ether.h>
 
-#define BUFFER_SIZE 4096
+class RawSocketServer {
+public:
+    RawSocketServer(boost::asio::thread_pool &pool, const std::string &interface)
+        : io_context_(pool.get_executor()), socket_fd_(-1) {
+        // Создаем raw-сокет
+        socket_fd_ = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+        if (socket_fd_ < 0) {
+            perror("socket");
+            throw std::runtime_error("Failed to create raw socket");
+        }
 
-struct esp_header {
-    uint32_t spi;
-    uint32_t seq;
-    uint8_t encrypted_data[BUFFER_SIZE]; // Полезная нагрузка
-} __attribute__((packed));
+        // Привязываем сокет к сетевому интерфейсу
+        struct sockaddr_ll sa{};
+        sa.sll_family = AF_PACKET;
+        sa.sll_protocol = htons(ETH_P_ALL);
+        sa.sll_ifindex = if_nametoindex(interface.c_str());
+        if (sa.sll_ifindex == 0) {
+            perror("if_nametoindex");
+            throw std::runtime_error("Failed to get interface index");
+        }
+
+        if (bind(socket_fd_, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+            perror("bind");
+            throw std::runtime_error("Failed to bind socket");
+        }
+
+        std::cout << "Listening on interface: " << interface << std::endl;
+    }
+
+    ~RawSocketServer() {
+        if (socket_fd_ >= 0) {
+            close(socket_fd_);
+        }
+    }
+
+    void start() {
+        for (int i = 0; i < 4; ++i) { // 4 потока в пуле
+            boost::asio::post(io_context_, [this] { receive_packets(); });
+        }
+    }
+
+private:
+    void receive_packets() {
+        constexpr size_t BUFFER_SIZE = 65536;
+        std::vector<uint8_t> buffer(BUFFER_SIZE);
+
+        while (true) {
+            ssize_t received_bytes = recvfrom(socket_fd_, buffer.data(), BUFFER_SIZE, 0, nullptr, nullptr);
+            if (received_bytes > 0) {
+                process_packet(buffer.data(), received_bytes);
+            }
+        }
+    }
+
+    void process_packet(const uint8_t *data, ssize_t length) {
+        // Разбираем Ethernet-заголовок
+        auto *eth_header = (struct ether_header *)data;
+        std::cout << "Packet received: " 
+                  << "Src MAC: " << ether_ntoa((struct ether_addr *)eth_header->ether_shost) 
+                  << " -> Dst MAC: " << ether_ntoa((struct ether_addr *)eth_header->ether_dhost) 
+                  << " Type: " << ntohs(eth_header->ether_type) << std::endl;
+    }
+
+    boost::asio::io_context &io_context_;
+    int socket_fd_;
+};
 
 int main() {
-    int raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
-    if (raw_sock < 0) {
-        perror("RAW socket failed");
-        return 1;
+    try {
+        boost::asio::thread_pool pool(4); // Пул из 4 потоков
+        RawSocketServer server(pool, "eth0"); // Указываем интерфейс
+
+        server.start();
+        pool.join(); // Ожидание завершения работы потоков
+    } catch (const std::exception &ex) {
+        std::cerr << "Error: " << ex.what() << std::endl;
     }
-
-    struct sockaddr_in addr {};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("192.168.1.2");
-
-    char packet[BUFFER_SIZE];
-    struct iphdr *ip = (struct iphdr*)packet;
-    struct esp_header *esp = (struct esp_header*)(packet + sizeof(struct iphdr));
-
-    // Заполняем IP-заголовок
-    ip->ihl = 5;
-    ip->version = 4;
-    ip->tos = 0;
-    ip->tot_len = htons(sizeof(struct iphdr) + sizeof(struct esp_header));
-    ip->id = htons(54321);
-    ip->frag_off = 0;
-    ip->ttl = 64;
-    ip->protocol = IPPROTO_ESP; // Указываем, что следующий заголовок - ESP
-    ip->saddr = inet_addr("192.168.1.1");
-    ip->daddr = inet_addr("192.168.1.2");
-    ip->check = 0; // Чек-сумму нужно вычислять
-
-    // Заполняем заголовок ESP
-    esp->spi = htonl(0x100); // SPI - Security Parameter Index
-    esp->seq = htonl(1); // Порядковый номер пакета
-
-    // Шифруем полезную нагрузку
-    memset(esp->encrypted_data, 0, BUFFER_SIZE); // Здесь вызовите шифрование Магма
-
-    // Отправляем пакет
-    if (sendto(raw_sock, packet, sizeof(struct iphdr) + sizeof(struct esp_header), 0,
-               (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("sendto failed");
-    }
-
-    close(raw_sock);
     return 0;
 }
 ```
 
----
+### **Объяснение кода**
+1. **Создание raw-сокета**:
+   - Используется `socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))` для перехвата всех пакетов на уровне Ethernet.
+   - Привязывается к заданному интерфейсу (`eth0`).
+   
+2. **Пул потоков (`boost::asio::thread_pool`)**:
+   - Создается пул из **4 потоков**.
+   - В каждом потоке вызывается `receive_packets()` для обработки входящих пакетов.
 
-### **3. Объяснение кода**
-- **IP-заголовок**: указывает `IPPROTO_ESP` (50), указывая, что следующий заголовок — ESP.  
-- **ESP-заголовок**: содержит `SPI` и `Sequence Number`, затем идут зашифрованные данные.  
-- **Отправка через RAW-сокет**: передача IP-пакета напрямую.  
+3. **Обработка пакетов**:
+   - Выводит **MAC-адреса** источника и назначения, а также **EtherType**.
 
-Этот код создает IP-пакет с ESP-заголовком и отправляет его. Вам нужно добавить шифрование полезной нагрузки Магмой.  
-
-Если требуется работа с IPsec SA/SP, используйте `ip xfrm` или `PF_KEY`.
+### **Запуск**
+```sh
+sudo ./server
+```
+> **Важно**: Raw-сокеты требуют **root-прав**.
